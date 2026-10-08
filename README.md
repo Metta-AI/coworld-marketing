@@ -78,7 +78,7 @@ Certification seats both baselines with the technical judge so it runs offline.
 
 ## League
 
-`docs/LEAGUE.md` has the platform-ladder settings (daily rounds, score ranking, one episode per round) and the feed workflow. Posting to X is a human step: the judge proposes, the team decides.
+Uploaded as `cow_4b439687-762f-4dc8-97e4-0e096c78bde8` (canonical, hosted certification passed); league seed `league_a53119d8-e6f4-4e17-8968-4be3209d9ad9`. `docs/LEAGUE.md` has the platform-ladder settings (daily rounds, score ranking, one episode per round) and the feed workflow. Posting to X is a human step: the judge proposes, the team decides.
 
 ## Layout
 

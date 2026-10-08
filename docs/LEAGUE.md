@@ -9,7 +9,13 @@ uv run softmax login
 uv run coworld league create softmax-video-marketing daily "Softmax Video Marketing" --default-variant daily-showcase --json
 ```
 
-Then, with the league id from the response:
+The league seed for this Coworld already exists: `league_a53119d8-e6f4-4e17-8968-4be3209d9ad9` (key `daily`), created by the Coworld owner on 2026-10-08. Declaring divisions and writing ladder settings are team-only operations (the API answers "ladder settings are platform-owned; only team principals can change them" for the owner), so a Softmax team member runs the rest once:
+
+```bash
+cd metta && uv run python ../coworld-video-marketing/tools/league_setup.py league_a53119d8-e6f4-4e17-8968-4be3209d9ad9 --enable --trigger
+```
+
+That script does steps 1 to 3 below with elevated privileges and sets the small-field budget. By hand, with the league id:
 
 1. Declare one Competition division: `PUT /v2/leagues/{league_id}/divisions` with `{"divisions":[{"name":"Competition","level":1,"type":"competition","hidden":false}]}`.
 2. `GET /v2/leagues/{league_id}/settings`, merge in `league/ladder_settings.json` from this repo (replace `div_REPLACE_ME` with the live division id, keep any `counterfactual_eval` sibling), and `POST` it back with `ladder.enabled` still false.
