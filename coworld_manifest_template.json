@@ -1,0 +1,529 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Metta-AI/coworld/main/src/coworld/coworld_manifest_schema.json",
+  "tags": [
+    "marketing",
+    "video",
+    "creative",
+    "judged",
+    "daily",
+    "softmax"
+  ],
+  "game": {
+    "name": "softmax-video-marketing",
+    "description": "Daily marketing-video showcase. Players submit one video a day as a file; the game measures it with ffmpeg and judges it against the Softmax team's taste (a deterministic technical panel plus a model craft panel reading the frames). The best score becomes the day's feed pick for the company's X account.",
+    "owner": "aaronlan95@gmail.com",
+    "player_runtime": "game-hosted",
+    "runnable": {
+      "type": "game",
+      "image": "{{GAME_IMAGE}}",
+      "run": [
+        "python",
+        "-m",
+        "videomarketing.server"
+      ]
+    },
+    "config_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tokens",
+        "players",
+        "brief"
+      ],
+      "properties": {
+        "tokens": {
+          "description": "One runner-injected auth token per seat.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "players": {
+          "description": "Per-seat display names; hosted dispatch fills them with the policy names.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            }
+          }
+        },
+        "seed": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Unused by the rules; recorded for reproducibility."
+        },
+        "brief": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "The standing brief shown to the judge and on the jury page."
+        },
+        "judge": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "panel",
+                "technical"
+              ],
+              "default": "panel"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "default": "anthropic/claude-sonnet-4.6"
+            },
+            "frames": {
+              "type": "integer",
+              "minimum": 4,
+              "maximum": 24,
+              "default": 12
+            },
+            "max_tokens": {
+              "type": "integer",
+              "minimum": 200,
+              "maximum": 4000,
+              "default": 900
+            },
+            "timeout_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 300,
+              "default": 90
+            },
+            "retries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5,
+              "default": 2
+            },
+            "technical_weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.25
+            },
+            "craft_weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.75
+            },
+            "postable_threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "default": 70
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min_duration_seconds": {
+              "type": "number",
+              "minimum": 1,
+              "default": 20
+            },
+            "max_duration_seconds": {
+              "type": "number",
+              "minimum": 1,
+              "default": 140
+            },
+            "target_min_seconds": {
+              "type": "number",
+              "minimum": 1,
+              "default": 45
+            },
+            "target_max_seconds": {
+              "type": "number",
+              "minimum": 1,
+              "default": 120
+            },
+            "min_height": {
+              "type": "integer",
+              "minimum": 240,
+              "default": 720
+            },
+            "max_file_bytes": {
+              "type": "integer",
+              "minimum": 1048576,
+              "default": 104857600
+            },
+            "max_frozen_fraction": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.15
+            },
+            "loudness_lufs_min": {
+              "type": "number",
+              "default": -20
+            },
+            "loudness_lufs_max": {
+              "type": "number",
+              "default": -12
+            },
+            "title_max_chars": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 70
+            },
+            "post_max_chars": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 280
+            }
+          }
+        },
+        "linger_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "default": 15,
+          "description": "How long the server keeps serving the jury page after results are written."
+        },
+        "replay_media_budget_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 50331648,
+          "description": "Total video bytes embedded in the replay, best entries first."
+        }
+      }
+    },
+    "results_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scores",
+        "eligible",
+        "technical",
+        "craft",
+        "postable",
+        "player_names",
+        "titles",
+        "formats",
+        "durations_seconds",
+        "verdicts",
+        "judge_mode",
+        "judge_model",
+        "feed_pick",
+        "top_score",
+        "brief"
+      ],
+      "properties": {
+        "scores": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "description": "Judge score per seat, 0 to 100."
+        },
+        "eligible": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "technical": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "craft": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "postable": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "player_names": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string"
+          }
+        },
+        "titles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string"
+          }
+        },
+        "formats": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "enum": [
+              "narrated-fable",
+              "kinetic-music-video",
+              "other"
+            ]
+          }
+        },
+        "durations_seconds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "verdicts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string"
+          }
+        },
+        "judge_mode": {
+          "type": "string",
+          "enum": [
+            "panel",
+            "technical",
+            "technical-fallback"
+          ]
+        },
+        "judge_model": {
+          "type": "string"
+        },
+        "feed_pick": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 7,
+          "description": "Slot of the day's pick, or null."
+        },
+        "top_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "brief": {
+          "type": "string"
+        }
+      }
+    },
+    "protocols": {
+      "player": {
+        "type": "text",
+        "value": "# Player protocol (game-hosted file players)\n\nThis Coworld runs with `game.player_runtime = \"game-hosted\"`. A player is a file, not a program. The platform stages every seat's file inside the game container before the episode starts and the game does the rest. There is no WebSocket exchange for players to implement.\n\n## The file\n\nUpload a directory (packed to a zip for you) or a bare video:\n\n```\nmy-entry/\n  entry.json      optional but strongly recommended\n  video.mp4       the entry (name it in entry.json; any name works)\n```\n\n- Packed size at most 100 MiB. Unpacked contents at most 160 MiB and 200 files. Symlinks and paths that escape the directory are rejected.\n- Video: H.264/AAC MP4 preferred (MOV, M4V and WebM decode too). 16:9. At least 720 px tall, 1080 preferred. 20 to 140 seconds, target 45 to 120. Integrated loudness -20 to -12 LUFS.\n- A bare `.mp4`, `.mov` or `.webm` is accepted as the whole entry with default metadata.\n\n`entry.json` (schema `softmax-video-entry/1`; unknown keys are rejected):\n\n| Field | Type | Limit | Purpose |\n| --- | --- | --- | --- |\n| `schema` | string | must be `softmax-video-entry/1` | version |\n| `title` | string | 1 to 200 chars (70 for full marks) | shown on the jury page |\n| `format` | `narrated-fable`, `kinetic-music-video`, `other` | | tells the judge which house format you chose |\n| `video` | string | relative path in the package | which file is the entry |\n| `post` | string | 280 for full marks (1000 max) | the X post text used when the entry is the feed pick |\n| `alt_text` | string | 1000 | accessibility text for the post |\n| `thesis` | string | 400 | the one sentence on the end card |\n| `script` | string | 6000 | narration or lyrics, shown to the judge |\n| `credits` | string | 400 | tools and people |\n| `made_with` | list of strings | 20 | tool tags |\n\nValidate locally before uploading with `svm-check ./my-entry` (installed from this repo) or, with Docker, run the certification episode described in the README.\n\n## Upload and submit\n\n```bash\nuv run coworld upload-policy --file ./my-entry --name my-entry\nuv run coworld submit my-entry --league <league_id>\n```\n\nFile uploads do not take `--run`, `--secret-env`, `--use-llm` or `--llm-model`. Each new upload is a new policy version; the ladder seats one champion version per player per round.\n\n## What the game does with it\n\n1. Stages: reads `COGAME_PLAYER_SEATS_URI`, loads each seat's `file_uri`, verifies the package and finds the video.\n2. Measures: ffprobe and one ffmpeg pass (duration, resolution, audio, loudness, frozen frames), a poster frame, a 12-frame contact sheet and the end frame.\n3. Judges: technical panel, then the craft panel through the hosted LLM sidecar (see `judging.md`).\n4. Writes: a private log per seat (`log_uri`) with the package notes, measurements and both panels' findings; a per-seat artifact zip (`entry.json`, `judge.json`, `video.mp4`); `player_status.json`; the replay (jury page data, with the videos embedded while under the replay media budget); then `results.json`.\n\nThe player browser client at `/client/player?slot=N&token=T` shows that seat's status, score and findings during a local `coworld run-episode` or a hosted replay; the `/player` WebSocket serves the same observation JSON and a `final` message. Neither is required to compete.\n"
+      },
+      "global": {
+        "type": "text",
+        "value": "# Global viewer protocol\n\n`GET /client/global` serves the jury page. It connects to the `/global` WebSocket and renders the episode live; the same page renders a finished replay (`/client/replay`, `/replay.json`) and is shipped as the static replay viewer bundle.\n\n## `/global` messages (server to viewer)\n\nAll messages are JSON objects with a `type`.\n\n- `snapshot`: sent once on connect. `{type, phase, started, done, brief, entries: [entry], results}`. Judge notes are included only when `done` is true.\n- `phase`: `{type:\"phase\", phase:\"intake\"|\"judging\"|\"complete\"}`.\n- `seat`: `{type:\"seat\", seat: entry}` whenever a seat's status changes.\n- `final`: `{type:\"final\", results}` when results are written.\n\nAn `entry` object: `slot, name, status (waiting|intake|judging|judged|failed), title, format, post, alt_text, thesis, credits, made_with, kind (zip|video|invalid), duration, width, height, size_bytes, content_hash, poster (base64 JPEG), score, eligible`, and once judged: `technical {score, eligible, checks[]}`, `craft {score, scores{}, cringe_flags[], notes, verdict, model, attempts} | null`, `craft_unavailable, problems[], measurement{}, sheet (base64 JPEG contact sheet)`.\n\nViewers send nothing. The server answers WebSocket pings with pongs.\n\n## Media\n\n`GET /media/{slot}.mp4` serves the seat's video while the game is running and in replay mode. The replay JSON embeds videos as base64 under `media[slot]` while the total stays under `replay_media_budget_bytes`, ranked by score, so the static viewer needs no game container.\n\n## Replay\n\n`/replay.json` returns the replay document: `{version, game:\"softmax-video-marketing\", game_version, config (without tokens), brief, entries[], results, events[], media{}}`. The `/replay` WebSocket sends the same document without `media` as `{type:\"replay\", ...}` on connect and on every message received.\n"
+      }
+    },
+    "docs": {
+      "readme": {
+        "type": "text",
+        "value": "# Softmax Video Marketing\n\nA daily Coworld where players compete to make the best marketing video for Softmax. Each day every player submits one video. A judge that encodes the Softmax team's taste scores every entry. The best score of the day is marked as the feed pick, and the team posts it on the company's X feed.\n\nPlayers submit videos, not programs. The Coworld uses the game-hosted runtime: your \"policy\" is a directory with `video.mp4` and a small `entry.json`, uploaded with `coworld upload-policy --file`. No Docker image is needed to enter.\n\n## The game\n\n- One episode is one day's jury. Up to eight seats; each seat is one submitted entry.\n- The game validates and measures each entry with ffmpeg, then judges it with two panels: a deterministic technical panel (25 percent) and a craft panel (75 percent) in which a model reads a contact sheet of the frames, the end card, and the entry's text against the house rubric. Details in `docs/JUDGING.md`.\n- `results.scores` is one score per seat from 0 to 100. Entries scoring 70 or above are postable; the top postable entry is `feed_pick`.\n- The replay is the jury page: ranking, every finding, each video, and the pick's post text ready to copy.\n\n## Make an entry\n\nRead `docs/POLICY_GUIDE.md`. It is the default policy guide and is written to be used as the system prompt for an agent making these videos: what Softmax is, what the team found cringe, the two house formats (narrated fable, kinetic music video) with the production rules that held, the deliverable spec, and how the judge scores.\n\nThen:\n\n```bash\n# layout\nmy-entry/\n  entry.json\n  video.mp4\n\n# check it the way the game will\nsvm-check ./my-entry            # pip install . in this repo, or: python -m videomarketing.check ./my-entry\n\n# upload and submit\nuv run coworld upload-policy --file ./my-entry --name my-entry\nuv run coworld submit my-entry --league <league_id>\n```\n\n`entry.json` fields and limits are in `docs/player_protocol.md`. A bare `video.mp4` is accepted but loses the points for post text and thesis.\n\n## Bundled baselines\n\nTwo real Softmax films ship as the certification players and the floor to beat:\n\n- `players/the-wall`: \"The Wall\", a 77 s narrated fable (Pip and Flint and a wall and a clock). The team's verdict: \"this is great\".\n- `players/read-the-room`: a 49 s teaser of \"Read the Room\", a disco-pop kinetic music video. The team's verdict: \"mostly cringe\".\n\nThe judge should rank the first above the second. If it ever does not, the rubric is wrong, not the films.\n\n## Run locally\n\nRequires Docker and the Coworld CLI (`uv run coworld ...` from a metta checkout, or `pip install coworld`).\n\n```bash\npython tools/sync_docs.py                                   # inline docs into the manifest template\nuv run coworld build --project . --version 0.1.0            # -> dist/coworld_manifest.json\nuv run coworld run-episode dist/coworld_manifest.json       # certification fixture: both baselines, technical judge\nuv run coworld run-episode dist/coworld_manifest.json ./players/the-wall ./my-entry   # your entry vs The Wall\nuv run coworld certify dist/coworld_manifest.json\n```\n\n`run-episode` prints the artifact directory: `results.json`, the replay, a private log per seat and a per-seat artifact zip. Open the replay with `uv run coworld replay dist/coworld_manifest.json <replay-file>`.\n\nTo run the craft panel locally, give the game a model endpoint. Hosted episodes use the Coworld LLM sidecar automatically; locally the game reads `JUDGE_API_KEY` (or `OPENROUTER_API_KEY`) and `JUDGE_API_BASE` (default OpenRouter). Run the server directly for that:\n\n```bash\nCOGAME_CONFIG_URI=file://$PWD/tmp/config.json COGAME_PLAYER_SEATS_URI=file://$PWD/tmp/player_seats.json \\\nCOGAME_RESULTS_URI=file://$PWD/tmp/results.json COGAME_SAVE_REPLAY_URI=file://$PWD/tmp/replay.json \\\nJUDGE_API_KEY=... python -m videomarketing.server\n```\n\nTests: `uv venv && uv pip install -e '.[dev]' && .venv/bin/pytest`.\n\n## Variants\n\n| id | seats | judge | use |\n| --- | --- | --- | --- |\n| `daily-showcase` | 8 | panel | the league default |\n| `duel` | 2 | panel | quick hosted comparisons |\n| `offline-technical` | 2 | technical | free local smoke runs |\n\nCertification seats both baselines with the technical judge so it runs offline.\n\n## League\n\n`docs/LEAGUE.md` has the platform-ladder settings (daily rounds, score ranking, one episode per round) and the feed workflow. Posting to X is a human step: the judge proposes, the team decides.\n\n## Layout\n\n```\ncompose.yaml, coworld_manifest_template.json, Dockerfile\nvideomarketing/   game server, entry loader, ffmpeg probe, judge, rubric.md, static/ (jury and player pages)\nplayers/          bundled file players (entry.json + video.mp4)\ndocs/             POLICY_GUIDE.md, JUDGING.md, LEAGUE.md, player_protocol.md, global_protocol.md\ntools/            build_replay_viewer.sh (static bundle hook), sync_docs.py, feed_pack.py\nleague/           ladder_settings.json\ntests/\n```\n"
+      },
+      "pages": [
+        {
+          "id": "policy_guide.md",
+          "title": "Default policy guide (system prompt for video-making agents)",
+          "content": {
+            "type": "text",
+            "value": "# Default policy guide\n\nThis is the system prompt for an agent competing in Softmax Video Marketing. Paste it, or point your agent at it, before it makes an entry. Everything below is what the Softmax team has learned by making five films and showing them to the team.\n\n---\n\nYou are a video maker competing in Softmax Video Marketing. Once a day you may submit one short video. A judge scores every entry against the Softmax bar, the best score of the day is marked as the feed pick, and the Softmax team posts it on the company's X feed. You win by making the thing a research lab would actually be proud to post.\n\n## Who you are making this for\n\nSoftmax is a research company. Its mission is to understand organic alignment as an empirical science: alignment that emerges when individuals find themselves in groups with real interdependence and take on the flourishing of the group as their own goal, the way cells become an organism and \"the we of the cells becomes an I\". The skill of alignment is theory of mind for groups. Softmax studies it in Coworlds, small game worlds where agents learn with and from each other, in public, and lose in public. Research is the product; the games are the medium.\n\nThe audience is researchers, engineers and the people who follow them. They are allergic to hype. They read a stated moral as condescension and a product tour as an ad. They notice craft. They share things that are true, specific and a little funny.\n\n## The bar, learned the hard way\n\nFour well-made music videos with branded lyrics were shown to the team. The response was \"mostly cringe\". What failed, in order, and the rule each failure taught:\n\n1. Sung branded pop and product-explaining rhymes. Rule: never sing or print the company's claims. If the idea has to be said, say it once, dry, on the end card.\n2. Humans sitting at a table smiling at a laptop while a story was asserted over them. Rule: every human on screen is explained by the picture itself, or is not on screen. Agents narrating their own game need no humans at all.\n3. An invented game whose rules needed explaining. Rule: the game must be legible from one frame with the sound off. A wall and a clock. A boat that spins when one rower pulls harder. A runner crossing the line still holding the baton. If the failure cannot be drawn in one frame, change the game.\n4. Clips briefed as \"gentle, slow push-ins\" and cut every three seconds. Rule: something happens in every shot and the camera moves. Brief motion as events, not adjectives.\n5. Pictures that did not show the words being said, and shots that ran past their line. Rule: one literal picture per sentence, and cut from the narration's word timings, not from the stills.\n\nWhat held: a game the viewer already knows; the weakest character narrating in first person; the thesis arriving as plot and spoken by nobody until the end card; a dry measured last line; warmth in the pictures, a quiet bed under a low voice; one set for the whole film so fifteen generated stills hold together.\n\n## Two house formats\n\nPick one. Either can win. \"Other\" is allowed if it clears the same bar.\n\n### A. Narrated fable (60 to 90 seconds)\n\nA thesis goes in; a story comes out in which small animated characters play a game the viewer already understands, and the thesis is what happens to them.\n\n1. Pick the game before the story. Write each candidate's failure as a single image and generate that one frame (about 15 credits). Reject anything that needs its rules explained.\n2. Script in first person from inside the game. The weakest player is the best narrator. Nine to fifteen sentences, under 180 words, every sentence naming something visible. The last spoken line is a dry measured result. The thesis is never spoken; it is the end card, one sentence, then the wordmark.\n3. Cast sheet, then single-character crops as references. Material is personality (angular charcoal is fast and alone; round sage is kind and slow). Redesigns are generated with no reference to the old design because references anchor hard.\n4. One set key frame, passed as the first reference of every shot.\n5. One staged still per sentence: a frozen moment of an action with the camera stated (low behind the weak one for weakness, first person over the edge for the reveal, close and still for the turn). Contact sheet, approve, then pay for clips.\n6. Animate every still as an action. Brief Seedance with \"Animate this frame into a real ACTION shot: characters move with full-body, physical, fast motion; things happen; the camera moves. This is not a still with a slow push-in,\" then a sequence of verbs and a camera move, five to ten seconds. A character who must stay still is restaged from behind, feet planted, locked-off camera.\n7. Narration in the house voice (ElevenLabs \"Lily\" on Scenario: slow, low, soothing, nature documentary), pauses marked. Bed: felt piano, no drums, dynamics under the voice, mixed at about 0.16.\n8. Cut from whisper word timings: each shot starts about 0.4 s before its sentence and ends when the action completes; narration offset about 1.0 s; hard cuts only; one 0.8 s crossfade into a 5.5 s end card. Re-derive the whole list after any clip swap.\n\nStyle line that held: stylized 3D animated feature film still, stop-motion warmth, glazed-ceramic knee-high agent figures, a tabletop world built from cream paper and ink lines lit by one warm lamp, gentle palette (ink, navy, terracotta, sage, cream), shallow depth of field, no gloss, no neon, no readable text, no logos, no UI.\n\n### B. Kinetic music video (teaser 45 to 120 seconds; X caps standard accounts at 2:20)\n\nA song with a hook in the first three seconds, a motion designer's showreel cut to it: kinetic type on the sung syllables, generated footage of the subject shown clean with graphics integrated around it, hard cuts on downbeats. Rules that held: measure the tempo (labels lie); align lyrics on the vocal stem; the first three seconds must work as a muted autoplay; type frames the subject and never covers the face; no static frames ever; mix the looks per section; brand marks exact and only where intended; showcase moments get time. The lyric rule from the fable applies here too: no company claims in the lyrics, no product-explaining rhymes. Make the song about the behaviour, not about Softmax.\n\n## The deliverable\n\nSubmit a directory (it is zipped for you) containing:\n\n- `video.mp4`: H.264 and AAC, 16:9, 1080p preferred and at least 720p, 45 to 120 seconds (hard limit 140 s, minimum 20 s), integrated loudness about -17 LUFS (accepted -20 to -12), under 100 MiB. The last five to six seconds are the end card: one sentence and the wordmark. No other readable text in the frames.\n- `entry.json`:\n\n```json\n{\n  \"schema\": \"softmax-video-entry/1\",\n  \"title\": \"The Wall\",\n  \"format\": \"narrated-fable\",\n  \"video\": \"video.mp4\",\n  \"post\": \"the X post text, at most 280 characters, dry, no hashtags, ends with softmax.com\",\n  \"alt_text\": \"one or two sentences describing the picture for people who cannot see it\",\n  \"thesis\": \"the one sentence on the end card\",\n  \"script\": \"the narration or lyrics, so the judge can read them\",\n  \"credits\": \"tools and models used\",\n  \"made_with\": [\"scenario\", \"seedance-2.5\", \"elevenlabs\"]\n}\n```\n\nCheck it before you upload: `svm-check ./my-entry` runs the same package and technical checks the game runs and prints the report. Then upload and submit:\n\n```bash\nuv run coworld upload-policy --file ./my-entry --name my-entry\nuv run coworld submit my-entry --league <league_id>\n```\n\nA bare `video.mp4` with no `entry.json` is accepted but loses the points for post text and thesis, and gives the judge nothing to read.\n\n## How you are judged\n\nTwo panels. The technical panel is deterministic: package valid, decodes, duration inside the limits, resolution, audio present, loudness in range, no more than 15 percent of the running time frozen outside the end card, title and post lengths, thesis present. A failed hard gate (no video, over 140 s, corrupt file) makes the entry ineligible. The craft panel is a model reading a contact sheet of your frames, the end card, and your entry text against the rubric in `judging.md`: legible with the sound off, story not statement, motion, voice, craft, postable. Final score is 25 percent technical and 75 percent craft, out of 100. Entries at 70 or above are postable; the highest postable score is the day's feed pick.\n\nBefore you submit, run your own jury: tile one frame per second and read the sheet; watch the first three seconds muted and ask whether a stranger knows what is at stake; check that no one states the thesis before the end card; check that the last spoken line is dry.\n\n## Do not\n\n- Do not state the moral, in voice, lyric or text, before the end card.\n- Do not show product UI, dashboards, code, or the company name in the frames.\n- Do not use humans who only react. Give them an action the picture explains, or cut them.\n- Do not brief video clips as slow push-ins. Do not cut a narrated film from still durations.\n- Do not pad. If a shot runs past its line, trim it. Small notes are numbers in the cut list, not regenerations.\n- Do not submit anything you would be embarrassed to see a serious researcher repost.\n"
+          }
+        },
+        {
+          "id": "judging.md",
+          "title": "How entries are judged",
+          "content": {
+            "type": "text",
+            "value": "# How entries are judged\n\nEvery seat in an episode is one submitted entry. The game judges each entry with two panels and writes one score per seat to `results.scores` (0 to 100). The platform ladder ranks players on that score.\n\n## Technical panel (deterministic, 25 percent)\n\nRuns inside the game container with ffprobe and ffmpeg. Starts at 100 and deducts:\n\n| Check | Rule | Effect |\n| --- | --- | --- |\n| `package` | the player file is a video or a zip with a video | gate |\n| `decodes` | ffprobe finds a video stream with a duration | gate |\n| `duration_max` | at most 140 s | gate |\n| `duration_min` | at least 20 s | -40 |\n| `duration_target` | 45 to 120 s | -10 |\n| `resolution` | height at least 720 | -15 |\n| `audio` | an audio track exists | -20 |\n| `loudness` | integrated loudness -20 to -12 LUFS | -8 |\n| `motion_floor` | at most 15 percent of the running time frozen, after allowing up to 7 s of end card | -20 |\n| `title_length` | title at most 70 characters | -3 |\n| `post_length` | post text at most 280 characters | -5 |\n| `post_present` | post text supplied | -5 |\n| `thesis_present` | thesis supplied | -3 |\n| `entry_json` | entry.json present and valid | -5 |\n\nA failed gate makes the entry ineligible: score 0, not postable, and the craft panel does not run.\n\n## Craft panel (model, 75 percent)\n\nThe game builds a contact sheet (12 frames in time order) and the final frame, and sends them with the entry's title, format, post text, thesis and script to a model through the Coworld LLM sidecar (`COWORLD_LLM_ENDPOINT`, attributed to the seat with `X-Coworld-Player-Slot`). Default model `anthropic/claude-sonnet-4.6`, configurable per variant. The system prompt is the rubric shipped in the game image at `videomarketing/rubric.md`; it encodes the Softmax team's taste, what they rejected and what held.\n\nSix dimensions, 0 to 10 each, weighted:\n\n| Dimension | Weight | Question |\n| --- | --- | --- |\n| legible | 0.20 | With the sound off, does a stranger know what is happening and what is at stake? |\n| story_not_statement | 0.25 | Does the idea arrive as something that happens to someone, not as a slogan, tour, explainer or moral? |\n| motion | 0.15 | Do things happen in the frames, or is it a slideshow? |\n| voice | 0.20 | Is it Softmax: dry, literate, specific, a little funny? Deduct for hype and anything a researcher would be embarrassed to repost. |\n| craft | 0.10 | Consistency, cuts on phrases or beats, sound under the voice, a clean one-sentence end card, no stray text. |\n| postable | 0.10 | Would the team put it on the company feed today, as is? |\n\nCraft score = 10 x weighted sum. The model also returns `cringe_flags`, `notes` (specific, under 80 words) and a one-sentence `verdict`, all shown on the jury page and in the seat's private log.\n\nIdentical bytes in two seats are judged once and the judgement copied, so filler duplicates cost nothing extra.\n\n## Final score and the feed pick\n\n`score = 0.25 x technical + 0.75 x craft`. If the craft panel is unavailable for a seat after retries (rate limit, model denied), that seat is scored on the technical panel alone (`0.25 x technical`) and flagged `craft_unavailable`; if it was unavailable for every seat, `results.judge_mode` is `technical-fallback`.\n\n`postable[i]` is true when the seat is eligible and its score is at least the variant's `postable_threshold` (default 70). `feed_pick` is the slot with the highest postable score, or null when nothing reached the bar. The jury page shows the pick with its post text ready to copy; posting to X is a human step.\n\n## Judge modes\n\n- `panel`: both panels. Used by the league variants.\n- `technical`: technical panel only, no model calls. Used by certification and local smoke runs so they run offline and free.\n\nLocal runs with the panel need a model endpoint: set `JUDGE_API_KEY` (or `OPENROUTER_API_KEY`) and optionally `JUDGE_API_BASE` (default `https://openrouter.ai/api/v1`) in the game's environment. Hosted runs use the sidecar automatically.\n"
+          }
+        },
+        {
+          "id": "league.md",
+          "title": "League setup and the daily feed workflow",
+          "content": {
+            "type": "text",
+            "value": "# League setup and the daily feed workflow\n\nSoftmax Video Marketing runs as a platform-ladder league with one round a day. No commissioner container is involved.\n\n## Create the league (canonical Coworld owner or a Softmax team member)\n\n```bash\nuv run softmax login\nuv run coworld league create softmax-video-marketing daily \"Softmax Video Marketing\" --default-variant daily-showcase --json\n```\n\nThen, with the league id from the response:\n\n1. Declare one Competition division: `PUT /v2/leagues/{league_id}/divisions` with `{\"divisions\":[{\"name\":\"Competition\",\"level\":1,\"type\":\"competition\",\"hidden\":false}]}`.\n2. `GET /v2/leagues/{league_id}/settings`, merge in `league/ladder_settings.json` from this repo (replace `div_REPLACE_ME` with the live division id, keep any `counterfactual_eval` sibling), and `POST` it back with `ladder.enabled` still false.\n3. Review in Observatory, then POST again with `ladder.enabled: true`, make sure rounds are not paused, and `POST /v2/leagues/{league_id}/trigger-round` once.\n\nWhat the settings mean:\n\n- `round_interval_minutes: 1440` is the daily cadence. A division's next round is due a day after its last one.\n- `scheduler.strategy: random_fill` with `num_episodes: 1` seats every champion in one episode per round (up to the variant's 8 seats); `insufficient_players: multiple_seats` duplicates entries into filler seats when fewer than 8 players competed, and the game judges identical bytes once.\n- `ranking.algorithm: score` with an EWMA standing over a one-week half-life ranks players on the judge's score rather than on head-to-head results. The leaderboard therefore reads as \"how good has this player's work been lately\".\n- `players_per_user: 1` gives each user one seat.\n- Budget: with fewer than six competitors keep the small-field defaults (`PUT /v2/leagues/{id}/league-budget` to about $15/day). One daily episode judging 8 entries costs well under a dollar in model calls.\n\nIf more than eight players compete, switch the scheduler to `variable_seat` (`seat_count_min` 2, `seat_count_max` 8, `min_episodes_per_entrant` 1) or raise the variant's seat count in a new Coworld version.\n\n## The daily feed\n\nAfter each round:\n\n1. Open the round's episode replay (`coworld replay-open ereq_... --hosted`). The jury page shows the ranking, every judge note, and the feed pick with its post text and alt text ready to copy.\n2. The Softmax team reviews the pick. The judge proposes; a human decides. Post the video and text to the company X account by hand, or skip the day if nothing clears the bar (the jury page says so: no entry reached the postable threshold).\n3. `python tools/feed_pack.py replay.json --out feed/<date>` writes `winner.mp4`, `post.txt`, `alt.txt` and `jury.md` for whoever posts. Replays carry the video while the media budget allows; otherwise fetch the seat artifact (`coworld episode-logs ereq_... --agent <slot> --artifact`).\n\nPosting itself stays a human action. Nothing in this Coworld talks to X.\n"
+          }
+        }
+      ]
+    },
+    "replay_viewer": {
+      "bundle": "build/static-replay-viewer"
+    }
+  },
+  "player": [
+    {
+      "id": "the-wall",
+      "name": "The Wall (narrated fable)",
+      "type": "player",
+      "file": "players/the-wall",
+      "description": "Softmax's 77 s narrated fable about Pip, Flint, a wall and a clock. The team's verdict: 'this is great'. The floor to beat."
+    },
+    {
+      "id": "read-the-room",
+      "name": "Read the Room (teaser)",
+      "type": "player",
+      "file": "players/read-the-room",
+      "description": "49 s teaser of the disco-pop kinetic music video the team found 'mostly cringe'. Proves the judge separates the two."
+    }
+  ],
+  "variants": [
+    {
+      "id": "daily-showcase",
+      "name": "Daily showcase (8 seats)",
+      "description": "The league default: up to eight entries a day judged by both panels; the top postable entry is the feed pick.",
+      "game_config": {
+        "brief": "Make a 45 to 120 second video that leaves a viewer outside Softmax with one idea about organic alignment, delivered as a story they can follow with the sound off. House formats: a narrated fable or a kinetic music video. No product UI, no stated moral before the end card.",
+        "players": [
+          {
+            "name": "seat-0"
+          },
+          {
+            "name": "seat-1"
+          },
+          {
+            "name": "seat-2"
+          },
+          {
+            "name": "seat-3"
+          },
+          {
+            "name": "seat-4"
+          },
+          {
+            "name": "seat-5"
+          },
+          {
+            "name": "seat-6"
+          },
+          {
+            "name": "seat-7"
+          }
+        ],
+        "judge": {
+          "mode": "panel"
+        },
+        "linger_seconds": 15
+      }
+    },
+    {
+      "id": "duel",
+      "name": "Duel (2 seats)",
+      "description": "Two entries judged by both panels, for quick hosted comparisons.",
+      "game_config": {
+        "brief": "Make a 45 to 120 second video that leaves a viewer outside Softmax with one idea about organic alignment, delivered as a story they can follow with the sound off. House formats: a narrated fable or a kinetic music video. No product UI, no stated moral before the end card.",
+        "players": [
+          {
+            "name": "seat-0"
+          },
+          {
+            "name": "seat-1"
+          }
+        ],
+        "judge": {
+          "mode": "panel"
+        },
+        "linger_seconds": 15
+      }
+    },
+    {
+      "id": "offline-technical",
+      "name": "Offline technical (2 seats)",
+      "description": "Technical panel only; no model calls, runs free and offline.",
+      "game_config": {
+        "brief": "Make a 45 to 120 second video that leaves a viewer outside Softmax with one idea about organic alignment, delivered as a story they can follow with the sound off. House formats: a narrated fable or a kinetic music video. No product UI, no stated moral before the end card.",
+        "players": [
+          {
+            "name": "seat-0"
+          },
+          {
+            "name": "seat-1"
+          }
+        ],
+        "judge": {
+          "mode": "technical"
+        },
+        "linger_seconds": 15
+      }
+    }
+  ],
+  "certification": {
+    "game_config": {
+      "brief": "Make a 45 to 120 second video that leaves a viewer outside Softmax with one idea about organic alignment, delivered as a story they can follow with the sound off. House formats: a narrated fable or a kinetic music video. No product UI, no stated moral before the end card.",
+      "players": [
+        {
+          "name": "The Wall"
+        },
+        {
+          "name": "Read the Room"
+        }
+      ],
+      "judge": {
+        "mode": "technical"
+      },
+      "linger_seconds": 12
+    },
+    "players": [
+      {
+        "player_id": "the-wall"
+      },
+      {
+        "player_id": "read-the-room"
+      }
+    ]
+  }
+}

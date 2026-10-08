@@ -1,0 +1,30 @@
+{
+  "round_interval_minutes": 1440,
+  "ladder": {
+    "enabled": false,
+    "scheduler": {
+      "strategy": "random_fill",
+      "insufficient_players": "multiple_seats",
+      "num_episodes": 1
+    },
+    "fulfillment": {
+      "allowed_failures": 0.0,
+      "retry_times": 2
+    },
+    "ranking": {
+      "algorithm": "score",
+      "round_scoring_rule": "mean",
+      "standing_aggregation": "ewma",
+      "half_life_hours": 168,
+      "initial_standing": 0.0
+    },
+    "divisions": [
+      {
+        "division_id": "div_REPLACE_ME",
+        "name": "Competition",
+        "disqualify_after_consecutive_failures": 5
+      }
+    ],
+    "players_per_user": 1
+  }
+}

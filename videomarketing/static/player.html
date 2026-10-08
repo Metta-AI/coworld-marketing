@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your seat</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=Merriweather+Sans:wght@400;600;700&display=swap">
+<style>
+  :root { --bg:#fffdf4; --fg:#111827; --fg-subtle:#555; --fg-muted:#6b6560; --navy:#1a3875; --sage:#5d6d41; --terracotta:#945637; --border:#e4dac8; --border-strong:#d4c9b5; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 "Merriweather Sans", system-ui, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:32px 20px 64px; }
+  .eyebrow { font-size:11px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--fg-subtle); }
+  h1 { font:700 28px/1.2 Merriweather, Georgia, serif; margin:6px 0 4px; }
+  h2 { font:700 12px/1.3 Merriweather, Georgia, serif; letter-spacing:.12em; text-transform:uppercase; color:var(--navy); margin:28px 0 8px; border-bottom:2px solid var(--border-strong); padding-bottom:6px; }
+  .status { color:var(--fg-muted); }
+  .score { font:700 44px/1 Merriweather, Georgia, serif; font-variant-numeric:tabular-nums; }
+  .ok { color:var(--sage);} .bad { color:var(--terracotta);} .muted{color:var(--fg-muted);}
+  ul { padding-left:18px; } li { margin:4px 0; }
+  video { width:100%; max-height:420px; background:#111; border-radius:3px; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size:13px; font-variant-numeric:tabular-nums; }
+  p.notes { border-left:3px solid var(--border-strong); padding:2px 12px; margin:8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Softmax Video Marketing</div>
+  <h1 id="title">Your seat</h1>
+  <div class="status" id="status">Connecting…</div>
+  <div id="video"></div>
+  <h2>Score</h2>
+  <div><span class="score" id="score">—</span> <span class="muted">/ 100</span> <span id="verdict" class="muted"></span></div>
+  <h2>Technical panel</h2>
+  <ul id="checks"><li class="muted">Waiting for the judge…</li></ul>
+  <h2>Craft panel</h2>
+  <div id="craft" class="muted">Waiting for the judge…</div>
+  <h2>Package notes</h2>
+  <ul id="problems"><li class="muted">—</li></ul>
+</main>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  const slot = q.get('slot'), token = q.get('token');
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/player?slot=${encodeURIComponent(slot)}&token=${encodeURIComponent(token)}`);
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function render(o) {
+    $('title').textContent = o.title || o.name || 'Your seat';
+    $('status').textContent = `Seat ${o.slot} · ${o.name} · ${o.status}` + (o.duration ? ` · ${Math.round(o.duration)} s ${o.width}x${o.height}` : '');
+    if (o.status === 'judged' || o.status === 'failed') {
+      $('score').textContent = Number(o.score).toFixed(1);
+      $('score').className = 'score ' + (o.eligible ? 'ok' : 'bad');
+    }
+    if (o.poster && !$('video').firstChild) {
+      $('video').innerHTML = `<video controls preload="metadata" poster="data:image/jpeg;base64,${o.poster}" src="/media/${o.slot}.mp4"></video>`;
+    }
+    if (o.technical) {
+      $('checks').innerHTML = o.technical.checks.map(c => `<li class="${c.ok ? '' : 'bad'}"><span class="mono">${esc(c.id)}</span> — ${esc(c.detail)}${c.ok ? '' : (c.gate ? ' (gate)' : ` (−${c.penalty})`)}</li>`).join('');
+    }
+    if (o.craft) {
+      const s = o.craft.scores;
+      $('craft').className = '';
+      $('craft').innerHTML = `<div class="mono">legible ${s.legible} · story ${s.story_not_statement} · motion ${s.motion} · voice ${s.voice} · craft ${s.craft} · postable ${s.postable} → ${o.craft.score}/100</div>` +
+        `<p class="notes">${esc(o.craft.notes)}</p>` + (o.craft.cringe_flags.length ? `<div class="bad">Flags: ${esc(o.craft.cringe_flags.join('; '))}</div>` : '') +
+        `<div><em>${esc(o.craft.verdict)}</em></div>`;
+    } else if (o.craft_unavailable) {
+      $('craft').textContent = 'Craft panel unavailable this round; scored on the technical panel only.';
+    } else if (o.technical && !o.eligible) {
+      $('craft').textContent = 'Not judged: the entry failed a hard gate.';
+    }
+    if (o.problems) $('problems').innerHTML = o.problems.length ? o.problems.map(p => `<li>${esc(p)}</li>`).join('') : '<li class="muted">None.</li>';
+  }
+  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === 'observation') render(m); if (m.type === 'final') { $('verdict').textContent = m.results.verdicts[m.slot] || ''; } };
+  ws.onclose = () => { if ($('status').textContent === 'Connecting…') $('status').textContent = 'Rejected: invalid slot or token.'; };
+})();
+</script>
+</body>
+</html>

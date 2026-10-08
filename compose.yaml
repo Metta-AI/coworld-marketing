@@ -1,0 +1,6 @@
+services:
+  game:
+    image: coworld-video-marketing-game:latest
+    platform: linux/amd64
+    build:
+      context: .
