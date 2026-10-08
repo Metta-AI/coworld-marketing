@@ -185,6 +185,8 @@ class ModelClient:
             self.base = f"{base}/chat/completions"
             self.key = os.environ.get("JUDGE_API_KEY") or os.environ.get("OPENROUTER_API_KEY") or ""
             self.source = "local" if self.key else "none"
+        # Local runs may point at a provider that names models differently from the OpenRouter slugs the sidecar uses.
+        self.model = os.environ.get("JUDGE_MODEL") or cfg.model
 
     @property
     def available(self) -> bool:
@@ -192,7 +194,7 @@ class ModelClient:
 
     def complete(self, messages: list[dict[str, Any]], *, slot: int | None) -> str:
         body = {
-            "model": self.cfg.model,
+            "model": self.model,
             "messages": messages,
             "max_tokens": self.cfg.max_tokens,
             "temperature": 0.2,
@@ -288,7 +290,7 @@ def craft_review(
                 cringe_flags=[str(f)[:120] for f in flags][:12],
                 notes=str(data.get("notes", ""))[:800],
                 verdict=str(data.get("verdict", ""))[:280],
-                model=client.cfg.model,
+                model=client.model,
                 attempts=attempt,
                 raw=raw[:4000],
             )

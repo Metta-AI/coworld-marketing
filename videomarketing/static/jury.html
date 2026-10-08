@@ -139,8 +139,9 @@
       }
       const fails = t ? t.checks.filter(x => !x.ok) : [];
       const checks = state.done && t ? `<details><summary>Technical panel: ${fails.length ? fails.length + ' finding' + (fails.length > 1 ? 's' : '') : 'every check passed'}</summary><ul class="checks">${t.checks.map(x => `<li class="${x.ok ? '' : 'bad'}">${esc(x.id)} — ${esc(x.detail)}${x.ok ? '' : (x.gate ? ' (gate)' : ` (−${x.penalty})`)}</li>`).join('')}</ul>${e.sheet ? `<img class="sheet" alt="Contact sheet for ${esc(e.title)}" src="data:image/jpeg;base64,${e.sheet}">` : ''}</details>` : '';
+      const techVerdict = state.done && r ? String(r.verdicts[e.slot] || '') : '';
       const notes = c ? `<p class="notes">${esc(c.notes)}</p>${c.cringe_flags && c.cringe_flags.length ? `<div class="flags">Flags: ${esc(c.cringe_flags.join('; '))}</div>` : ''}<p class="verdict">${esc(c.verdict)}</p>` :
-        (state.done && r ? `<p class="verdict">${esc(r.verdicts[e.slot])}</p>` : '');
+        (techVerdict && !techVerdict.startsWith('Technical panel') ? `<p class="verdict">${esc(techVerdict)}</p>` : (e.craft_unavailable ? '<p class="verdict">Craft panel unavailable; scored on the technical panel only.</p>' : ''));
       const postBlock = isPick ? `<div class="post"><div class="eyebrow">Post text · ${(e.post || '').length}/280</div><p>${esc(e.post || '(no post text supplied)')}</p>${e.alt_text ? `<div class="eyebrow">Alt text</div><p>${esc(e.alt_text)}</p>` : ''}<button type="button" data-copy="${esc(e.post || '')}">Copy post text</button></div>` : '';
       const score = state.done ? `<div class="score">${Number(e.score).toFixed(1)}<small>/ 100</small></div><div class="sub">${esc(sub)}</div>` : `<div class="sub">${esc(e.status)}${e.duration ? ' · ' + fmtDur(e.duration) + ` · ${e.width}x${e.height}` : ''}</div>`;
       return `<article class="entry${isPick ? ' pick' : ''}" id="entry-${e.slot}">

@@ -55,4 +55,4 @@ Identical bytes in two seats are judged once and the judgement copied, so filler
 - `panel`: both panels. Used by the league variants.
 - `technical`: technical panel only, no model calls. Used by certification and local smoke runs so they run offline and free.
 
-Local runs with the panel need a model endpoint: set `JUDGE_API_KEY` (or `OPENROUTER_API_KEY`) and optionally `JUDGE_API_BASE` (default `https://openrouter.ai/api/v1`) in the game's environment. Hosted runs use the sidecar automatically.
+Local runs with the panel need a model endpoint: set `JUDGE_API_KEY` (or `OPENROUTER_API_KEY`) and optionally `JUDGE_API_BASE` (default `https://openrouter.ai/api/v1`) and `JUDGE_MODEL` (when the local provider names the model differently from the OpenRouter slug) in the game's environment. Hosted runs use the sidecar automatically.

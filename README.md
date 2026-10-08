@@ -56,7 +56,7 @@ uv run coworld certify dist/coworld_manifest.json
 
 `run-episode` prints the artifact directory: `results.json`, the replay, a private log per seat and a per-seat artifact zip. Open the replay with `uv run coworld replay dist/coworld_manifest.json <replay-file>`.
 
-To run the craft panel locally, give the game a model endpoint. Hosted episodes use the Coworld LLM sidecar automatically; locally the game reads `JUDGE_API_KEY` (or `OPENROUTER_API_KEY`) and `JUDGE_API_BASE` (default OpenRouter). Run the server directly for that:
+To run the craft panel locally, give the game a model endpoint. Hosted episodes use the Coworld LLM sidecar automatically; locally the game reads `JUDGE_API_KEY` (or `OPENROUTER_API_KEY`), `JUDGE_API_BASE` (default OpenRouter) and `JUDGE_MODEL` (to override the model id for that provider). Run the server directly for that:
 
 ```bash
 COGAME_CONFIG_URI=file://$PWD/tmp/config.json COGAME_PLAYER_SEATS_URI=file://$PWD/tmp/player_seats.json \

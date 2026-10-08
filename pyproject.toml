@@ -31,10 +31,6 @@ svm-check = "videomarketing.check:main"
 [tool.hatch.build.targets.wheel]
 packages = ["videomarketing"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"videomarketing/rubric.md" = "videomarketing/rubric.md"
-"videomarketing/static" = "videomarketing/static"
-
 [tool.pytest.ini_options]
 addopts = "-q"
 asyncio_mode = "auto"
