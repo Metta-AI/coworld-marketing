@@ -9,7 +9,7 @@ uv run softmax login
 uv run coworld league create softmax-video-marketing daily "Softmax Video Marketing" --default-variant daily-showcase --json
 ```
 
-The league seed for this Coworld already exists: `league_a53119d8-e6f4-4e17-8968-4be3209d9ad9` (key `daily`), created by the Coworld owner on 2026-10-08. Declaring divisions and writing ladder settings are team-only operations (the API answers "ladder settings are platform-owned; only team principals can change them" for the owner), so a Softmax team member runs the rest once:
+The league for this Coworld is live: `league_a53119d8-e6f4-4e17-8968-4be3209d9ad9` (key `daily`, Competition division `div_0c6de5ae-88cc-4d54-a046-f139a6a21b22`), configured on 2026-10-08 with `tools/league_setup.py`: daily rounds, one episode per round, score ranking, $15/day budget, ladder enabled. Declaring divisions and writing ladder settings are team-only operations, so re-running that script (for example after editing `league/ladder_settings.json`) needs a Softmax team credential:
 
 ```bash
 cd metta && uv run python ../coworld-video-marketing/tools/league_setup.py league_a53119d8-e6f4-4e17-8968-4be3209d9ad9 --enable --trigger
