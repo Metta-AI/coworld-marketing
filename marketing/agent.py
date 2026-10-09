@@ -7,9 +7,12 @@ hands the result to episodes through the Coworld secret the game reads as ENGAGE
 2. Reads the company account's recent posts on X and matches them to graded entries by exact text, so a human who
    copies the pick's text and posts it needs to tell nobody.
 3. Pulls public metrics for every matched post (impressions, likes, reposts, replies, quotes, bookmarks).
-4. Writes the engagement feed (posts + judge cache) and stores it as the Coworld secret `engagement_feed`.
-5. Asks the continuous ladder to re-grade the posted entries (POST /v2/leagues/{id}/grade), so the engagement half
-   of their score moves with the audience.
+4. Reads the room: each league submission's `notes` holds `{"post_id": "post_..."}` naming the forum post on the
+   platform where the entry was pitched, and that post's score (ships) is the entry's engagement until it is live
+   on X. The agent maps the submission's policy version to a content hash it has already seen graded.
+5. Writes the engagement feed (posts + judge cache + room) and stores it as the Coworld secret `engagement_feed`.
+6. Asks the continuous ladder to re-grade the posted entries and the entries whose ships moved since the last feed
+   (POST /v2/leagues/{id}/grade), so the engagement half of their score moves with the audience.
 
 Run it on a loop:
 
@@ -31,6 +34,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,8 +48,9 @@ logger = logging.getLogger("marketing.agent")
 
 OBSERVATORY = os.environ.get("SOFTMAX_API", "https://softmax.com/api")
 X_API = "https://api.x.com/2"
-USER_AGENT = "coworld-marketing-agent/0.2"
-STATE_VERSION = 1
+USER_AGENT = "coworld-marketing-agent/0.3"
+STATE_VERSION = 2
+CURSOR_HEADERS = ("x-next-cursor", "next-cursor", "x-cursor")
 
 
 # --------------------------------------------------------------------------- state
@@ -64,6 +69,7 @@ class GradedEntry:
     tweet_id: str = ""
     posted_at: str = ""
     url: str = ""
+    post_id: str = ""  # the forum post the submission's notes point at, once seen
 
 
 @dataclass
@@ -75,6 +81,8 @@ class AgentState:
     entries: dict[str, GradedEntry] = field(default_factory=dict)  # by content hash
     seen_rounds: list[str] = field(default_factory=list)
     metrics: dict[str, dict[str, Any]] = field(default_factory=dict)  # by tweet id
+    room: dict[str, dict[str, Any]] = field(default_factory=dict)  # by content hash: ships, updated_at, post_id
+    room_ships: dict[str, int] = field(default_factory=dict)  # by policy version id, as of the last published feed
     last_feed_at: str = ""
     last_regrade_at: str = ""
 
@@ -102,11 +110,11 @@ def now_iso() -> str:
 
 
 class Softmax:
-    def __init__(self, token: str, *, elevated: bool = False) -> None:
+    def __init__(self, token: str, *, elevated: bool = False, transport: httpx.BaseTransport | None = None) -> None:
         headers = {"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT}
         if elevated:
             headers["X-Use-Elevated-Privileges"] = "true"
-        self.http = httpx.Client(base_url=OBSERVATORY, headers=headers, timeout=60)
+        self.http = httpx.Client(base_url=OBSERVATORY, headers=headers, timeout=60, transport=transport)
 
     def get(self, path: str, **params: Any) -> Any:
         response = self.http.get(path, params={k: v for k, v in params.items() if v is not None})
@@ -138,6 +146,43 @@ class Softmax:
             if not cursor or len(rounds) >= limit:
                 break
         return rounds
+
+    def league_submissions(self, league_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Every submission in the league, following the cursor the API hands back (response header or body)."""
+        items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            params: dict[str, Any] = {"league_id": league_id, "limit": limit}
+            if cursor:
+                params["cursor"] = cursor
+            response = self.http.get("/observatory/v2/league-submissions", params=params)
+            response.raise_for_status()
+            page = response.json()
+            batch = page if isinstance(page, list) else page.get("items", page.get("submissions", []))
+            items.extend(x for x in batch if isinstance(x, dict))
+            cursor = next((response.headers[h] for h in CURSOR_HEADERS if response.headers.get(h)), None)
+            if not cursor and isinstance(page, dict):
+                cursor = page.get("next_cursor") or None
+            if not cursor or not batch or cursor in seen_cursors:
+                return items
+            seen_cursors.add(cursor)
+
+    def post_score(self, post_id: str) -> int | None:
+        """A forum post's score (net ships), or None when the post is gone."""
+        response = self.http.get(f"/observatory/v2/posts/{post_id}")
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            return None
+        if "score" not in data and isinstance(data.get("post"), dict):
+            data = data["post"]
+        try:
+            return int(data.get("score", 0) or 0)
+        except (TypeError, ValueError):
+            return None
 
     def round_episodes(self, round_id: str) -> list[dict[str, Any]]:
         page = self.get(f"/observatory/v2/rounds/{round_id}/episodes")
@@ -299,6 +344,62 @@ def refresh_metrics(state: AgentState, x: X) -> int:
     return len(fetched)
 
 
+def submission_post_id(submission: dict[str, Any]) -> str:
+    """The notes convention: a submission's `notes` is a JSON object with the forum post id under `post_id`."""
+    notes = submission.get("notes")
+    if isinstance(notes, dict):
+        data: Any = notes
+    elif isinstance(notes, str) and notes.strip().startswith("{"):
+        try:
+            data = json.loads(notes)
+        except json.JSONDecodeError:
+            return ""
+    else:
+        return ""
+    post_id = data.get("post_id") if isinstance(data, dict) else None
+    return str(post_id).strip() if isinstance(post_id, str | int) and str(post_id).strip() else ""
+
+
+def submission_policy_version_id(submission: dict[str, Any]) -> str:
+    pv = submission.get("policy_version")
+    if isinstance(pv, dict) and pv.get("id"):
+        return str(pv["id"])
+    return str(submission.get("policy_version_id") or "")
+
+
+def sync_room(state: AgentState, softmax: Softmax, league_id: str) -> tuple[list[str], dict[str, int]]:
+    """Rebuild the room map (ships by content hash) from the league's submissions.
+
+    Returns the policy version ids whose ships moved since the last published feed, and the ships per policy version
+    now, which the caller stores once the feed carrying them is published. A policy version that has never been graded
+    has no content hash yet and is skipped: its first grade happens at 0 ships regardless."""
+    by_policy_version = {e.policy_version_id: e for e in state.entries.values() if e.policy_version_id}
+    scores: dict[str, int | None] = {}
+    room: dict[str, dict[str, Any]] = {}
+    ships_by_pv: dict[str, int] = {}
+    stamp = now_iso()
+    for submission in softmax.league_submissions(league_id):
+        post_id = submission_post_id(submission)
+        pv_id = submission_policy_version_id(submission)
+        if not post_id or not pv_id:
+            continue
+        entry = by_policy_version.get(pv_id)
+        if entry is None:
+            continue
+        if post_id not in scores:
+            scores[post_id] = softmax.post_score(post_id)
+        score = scores[post_id]
+        if score is None:
+            continue
+        ships = max(int(score), 0)
+        entry.post_id = post_id
+        room[entry.content_hash] = {"ships": ships, "updated_at": stamp, "post_id": post_id, "policy_version_id": pv_id}
+        ships_by_pv[pv_id] = ships
+    state.room = room
+    changed = sorted(pv for pv, ships in ships_by_pv.items() if state.room_ships.get(pv, 0) != ships)
+    return changed, ships_by_pv
+
+
 def build_feed(state: AgentState) -> dict[str, Any]:
     posts: dict[str, Any] = {}
     cache: dict[str, Any] = {}
@@ -328,6 +429,10 @@ def build_feed(state: AgentState) -> dict[str, Any]:
         "generated_at": now_iso(),
         "posts": posts,
         "judge_cache": cache,
+        "room": {
+            content_hash: {"ships": int(record.get("ships", 0)), "updated_at": str(record.get("updated_at", ""))}
+            for content_hash, record in state.room.items()
+        },
     }
 
 
@@ -346,9 +451,19 @@ def publish_feed(state: AgentState, softmax: Softmax, coworld: str, feed: dict[s
     return len(payload)
 
 
-def request_regrade(state: AgentState, softmax: Softmax, league_id: str, *, only_posted: bool = True) -> list[str]:
+def request_regrade(
+    state: AgentState,
+    softmax: Softmax,
+    league_id: str,
+    *,
+    only_posted: bool = True,
+    extra_ids: Iterable[str] = (),
+) -> list[str]:
+    """Ask the ladder to grade the posted entries again (their X metrics moved), plus any ids the caller adds, such
+    as the policy versions whose room ships changed."""
     ids = sorted(
         {e.policy_version_id for e in state.entries.values() if e.policy_version_id and (e.tweet_id or not only_posted)}
+        | {str(x) for x in extra_ids if x}
     )
     if not ids:
         return []
@@ -389,14 +504,19 @@ def step(state: AgentState, softmax: Softmax, x: X, args: argparse.Namespace) ->
     added = sync_rounds(state, softmax, args.league)
     matched = match_posts(state, x)
     refreshed = refresh_metrics(state, x)
+    room_changed, ships_by_pv = sync_room(state, softmax, args.league)
     feed = build_feed(state)
     size = publish_feed(state, softmax, args.coworld, feed, out=args.feed_out)
-    regraded = request_regrade(state, softmax, args.league) if args.regrade else []
+    state.room_ships = ships_by_pv  # the feed now carries these ships; changes from here on earn a re-grade
+    regraded = request_regrade(state, softmax, args.league, extra_ids=room_changed) if args.regrade else []
     logger.info(
-        "sync: %d new entries, %d newly matched posts, %d metrics refreshed, feed %d bytes (%d posts), regrade %d",
+        "sync: %d new entries, %d newly matched posts, %d metrics refreshed, room %d entries (%d moved), "
+        "feed %d bytes (%d posts), regrade %d",
         added,
         matched,
         refreshed,
+        len(feed["room"]),
+        len(room_changed),
         size,
         len(feed["posts"]),
         len(regraded),

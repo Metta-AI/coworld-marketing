@@ -45,6 +45,16 @@ def test_every_player_is_certified_and_exists(template: dict, root: Path) -> Non
     assert "commissioner" not in template
 
 
+def test_results_schema_carries_media_and_room(template: dict) -> None:
+    schema = template["game"]["results_schema"]
+    assert {"media", "room_ships"} <= set(schema["required"])
+    item = schema["properties"]["media"]["items"]
+    assert item["maxItems"] == 4 and item["items"]["required"] == ["path", "kind", "alt_text"]
+    assert schema["properties"]["room_ships"]["items"] == {"type": "integer", "minimum": 0}
+    engagement = template["game"]["config_schema"]["properties"]["engagement"]["properties"]
+    assert engagement["room_points_per_ship"]["default"] == 10.0
+
+
 def test_docs_are_synced(root: Path) -> None:
     run = subprocess.run([sys.executable, str(root / "tools/sync_docs.py"), "--check"], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
@@ -65,10 +75,10 @@ def test_entry_json_files_parse(root: Path) -> None:
 
     for player in ("the-wall", "read-the-room", "plain-post"):
         meta = EntryMeta.model_validate(json.loads((root / "players" / player / "entry.json").read_text()))
-        assert meta.schema_ == "softmax-post-entry/1"
+        assert meta.schema_ == "softmax-post-entry/2"
         assert weighted_length(meta.text) <= 280 and meta.label
-        if meta.media:
-            assert (root / "players" / player / meta.media).exists()
+        for item in meta.media:
+            assert (root / "players" / player / item.path).exists() and item.alt_text
 
 
 def test_ladder_settings_are_continuous(root: Path) -> None:

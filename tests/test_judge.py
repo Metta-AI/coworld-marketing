@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
 from marketing.config import EngagementConfig, JudgeConfig, Limits
-from marketing.engagement import blend, engagement_score, metric_fraction, parse_feed
-from marketing.entry import EntryMeta, load_entry
+from marketing.engagement import blend, engagement_score, metric_fraction, parse_feed, room_score, seat_engagement
+from marketing.entry import Entry, EntryMeta, MediaItem, MediaMeta, load_entry
 from marketing.judge import (
     RUBRIC_VERSION,
     CraftReview,
+    JudgeImagery,
     TechnicalReview,
+    build_messages,
     cache_record,
     from_cache,
     judge_score,
     technical_review,
 )
-from marketing.probe import contact_sheet, frame_at, measure, still_image
+from marketing.probe import Measurement, contact_sheet, frame_at, measure, still_image
 
 
 def test_measure_video_and_image(tiny_video: Path, tiny_image: Path) -> None:
@@ -162,3 +165,124 @@ def test_judge_cache_round_trip() -> None:
     assert from_cache(record, "other-model") is None
     assert from_cache({**record, "rubric": "post/0"}, "m") is None
     assert EntryMeta(text="hello").label == "hello"
+
+
+# --------------------------------------------------------------------------- several attachments
+
+
+def _picture(width: int = 1200, height: int = 800, size: int = 300_000) -> Measurement:
+    return Measurement(ok=True, kind="image", width=width, height=height, codec="png", size_bytes=size)
+
+
+def _image_entry(names: list[str], alts: list[str]) -> Entry:
+    pairs = list(zip(names, alts, strict=True))
+    meta = EntryMeta(text="three pictures, one idea", media=[MediaMeta(path=n, alt_text=a) for n, a in pairs])
+    items = [MediaItem(Path("/nonexistent") / n, "image", a, n) for n, a in pairs]
+    return Entry(meta, items, "zip", [])
+
+
+def test_technical_score_is_the_minimum_across_items_and_names_the_item() -> None:
+    entry = _image_entry(["a.png", "b.png", "c.png"], ["alt a", "", "alt c"])
+    review = technical_review(entry, [_picture(), _picture(), _picture()], Limits())
+    assert review.eligible
+    # One missing alt text costs 5 once (the worst item), not 5 per item and not 15.
+    assert review.score == 95
+    failed = review.failures
+    assert [c.id for c in failed] == ["alt_text"]
+    assert failed[0].detail.startswith("image 2/3 (b.png): ")
+    # A single bad picture fails the whole post, and the check says which one.
+    review = technical_review(entry, [_picture(), _picture(), _picture(width=10, height=10)], Limits())
+    assert not review.eligible and review.score == 0
+    bad = [c for c in review.failures if c.gate]
+    assert bad and bad[0].id == "dimensions" and bad[0].detail.startswith("image 3/3 (c.png): ")
+    # A picture that was never measured is a decode failure, not a pass.
+    review = technical_review(entry, [_picture(), _picture()], Limits())
+    assert not review.eligible and any(c.id == "decodes" and "c.png" in c.detail for c in review.failures)
+
+
+def test_single_item_checks_keep_their_plain_wording(tiny_image: Path, tmp_path: Path) -> None:
+    entry = load_entry(tiny_image, tmp_path / "w", Limits(), default_title="t")
+    review = technical_review(entry, [measure(tiny_image, "image")], Limits())
+    alt = next(c for c in review.checks if c.id == "alt_text")
+    assert alt.detail == "media without alt text"
+
+
+def test_rubric_version_bumped_for_media_lists() -> None:
+    assert RUBRIC_VERSION == "post/2"
+
+
+def test_build_messages_with_three_stills() -> None:
+    entry = _image_entry(["a.png", "b.png", "c.png"], ["first", "", "third"])
+    stills = [b"\xff\xd8\xff" + bytes([i]) * 8 for i in range(3)]
+    measurements = [_picture(), _picture(640, 360), _picture()]
+    messages = build_messages(entry, measurements, JudgeImagery(stills=stills), "brief", "softmaxresearch")
+    assert messages[0]["role"] == "system" and "one to four images" in messages[0]["content"]
+    content = messages[1]["content"]
+    images = [part for part in content if part["type"] == "image_url"]
+    assert len(images) == 3
+    assert [part["image_url"]["url"] for part in images] == [
+        "data:image/jpeg;base64," + base64.b64encode(s).decode() for s in stills
+    ]
+    texts = [part["text"] for part in content if part["type"] == "text"]
+    facts = texts[0]
+    assert "Media: 3 images" in facts and "image 2/3 (b.png): 640x360" in facts
+    assert "Alt text for image 1/3 (a.png): first" in facts and "Alt text for image 2/3 (b.png): (none)" in facts
+    labels = [t for t in texts if t.startswith("Image ")]
+    assert labels == ["Image 1 of 3. Alt text: first", "Image 2 of 3", "Image 3 of 3. Alt text: third"]
+    # Each label immediately precedes its picture.
+    for i, part in enumerate(content):
+        if part["type"] == "image_url":
+            assert content[i - 1]["type"] == "text" and content[i - 1]["text"].startswith("Image ")
+    assert texts[-1].startswith("Score it")
+
+
+def test_build_messages_text_only_has_no_images() -> None:
+    entry = Entry(EntryMeta(text="just words"), [], "text", [])
+    content = build_messages(entry, None, JudgeImagery(), "b", "a")[1]["content"]
+    assert not [p for p in content if p["type"] == "image_url"]
+    assert "Media: none (text-only post)" in content[0]["text"]
+
+
+# --------------------------------------------------------------------------- the room
+
+
+def test_room_score_and_seat_engagement() -> None:
+    cfg = EngagementConfig()
+    assert cfg.room_points_per_ship == 10.0
+    assert room_score(0, cfg) == 0.0
+    assert room_score(3, cfg) == 30.0
+    assert room_score(12, cfg) == 100.0
+    assert room_score(-4, cfg) == 0.0
+    assert room_score(3, EngagementConfig(room_points_per_ship=25)) == 75.0
+    # Not posted: the room is the engagement half.
+    assert seat_engagement(None, 3, cfg) == 30.0
+    assert seat_engagement(None, 0, cfg) == 0.0
+    # Posted: X metrics replace the room, however many ships it has.
+    metrics = {"impressions": 1_000, "likes": 10, "reposts": 0, "replies": 0}
+    assert seat_engagement(metrics, 12, cfg) == engagement_score(metrics, cfg) < 100.0
+    assert blend(80.0, 30.0, cfg) == 55.0
+
+
+def test_feed_room_map_parses_leniently() -> None:
+    base = {"schema": "softmax-engagement-feed/1", "account": "a", "generated_at": "", "posts": {}, "judge_cache": {}}
+    feed = parse_feed(json.dumps(base), source="t")
+    assert feed.available and feed.room == {} and feed.ships_for("sha256:x") == 0
+    feed = parse_feed(
+        json.dumps(
+            {
+                **base,
+                "room": {
+                    "sha256:a": {"ships": 3, "updated_at": "2026-10-09T01:00:00Z"},
+                    "sha256:b": {"ships": "7"},
+                    "sha256:c": {"ships": -2},
+                    "sha256:d": 4,
+                    "sha256:e": None,
+                },
+            }
+        ),
+        source="t",
+    )
+    assert feed.ships_for("sha256:a") == 3 and feed.room["sha256:a"].updated_at == "2026-10-09T01:00:00Z"
+    assert feed.ships_for("sha256:b") == 7 and feed.ships_for("sha256:c") == 0 and feed.ships_for("sha256:d") == 4
+    assert "sha256:e" not in feed.room and feed.ships_for("sha256:zzz") == 0
+    assert parse_feed(json.dumps({**base, "room": "nonsense"}), source="t").room == {}

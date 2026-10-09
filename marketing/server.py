@@ -1,10 +1,13 @@
 """Softmax Marketing game container.
 
-Game-hosted Coworld: each seat's player file is an X post (a zip with entry.json and optional media, a bare media
-file, or bare text). The game validates and measures the post, runs the autograder (technical panel + model craft
-panel), reads real engagement for posts that went out on the company account from the engagement feed, blends the
-two halves into the score, publishes the jury to the global viewer, writes per-seat logs and artifacts, then the
-replay (the jury page data) and results.
+Game-hosted Coworld: each seat's player file is an X post (a zip with entry.json and up to four images, one video
+or one gif; a bare media file; or bare text). The game validates and measures every attachment, runs the autograder
+(technical panel + model craft panel), reads engagement from the feed (X metrics for posts that went out on the
+company account, ship votes from the room for the rest), blends the two halves into the score, publishes the jury
+to the global viewer, writes per-seat logs and artifacts, then the replay (the jury page data) and results.
+
+Media is addressed by seat and index everywhere (`/media/{slot}/{index}`, `replay.media[slot][index]`), because a
+post is one to four files; `/media/{slot}` still serves index 0 for the single-file viewers.
 """
 
 from __future__ import annotations
@@ -30,8 +33,8 @@ from fastapi.responses import HTMLResponse
 
 from marketing import __version__
 from marketing.config import GameConfig, MediaKind
-from marketing.engagement import Feed, PostRecord, blend, engagement_score, load_feed
-from marketing.entry import Entry, EntryMeta, load_entry, weighted_length
+from marketing.engagement import Feed, PostRecord, blend, load_feed, seat_engagement
+from marketing.entry import Entry, EntryMeta, MediaItem, MediaMeta, load_entry, weighted_length
 from marketing.io import artifact_method, decode_replay_bytes, read_data, uri_to_path, write_data
 from marketing.judge import (
     RUBRIC_VERSION,
@@ -49,9 +52,25 @@ from marketing.probe import Measurement, contact_sheet, frame_at, measure, still
 
 logger = logging.getLogger("marketing.game")
 STATIC_DIR = Path(__file__).parent / "static"
-REPLAY_VERSION = 2
+REPLAY_VERSION = 3
 GAME_NAME = "marketing"
 MEDIA_TYPES = {"video": "video/mp4", "image": "image/jpeg", "gif": "image/gif", "none": "application/octet-stream"}
+SUFFIX_TYPES = {
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+}
+
+
+def mime_for(item: MediaItem) -> str:
+    """The content type the browser is told: by suffix when the package names one, by sniffed kind otherwise."""
+    return SUFFIX_TYPES.get(item.path.suffix.lower()) or MEDIA_TYPES[item.kind]
 
 
 @dataclass
@@ -65,18 +84,18 @@ class Seat:
     size_bytes: int = 0
     status: str = "waiting"  # waiting | intake | judging | judged | failed
     entry: Entry | None = None
-    measurement: Measurement | None = None
+    measurements: list[Measurement] = field(default_factory=list)  # one per attachment, in entry order
     technical: TechnicalReview | None = None
     craft: CraftReview | None = None
     craft_unavailable: bool = False
     judge: float = 0.0
     engagement: float = 0.0
     post: PostRecord | None = None
+    room_ships: int = 0
     score: float = 0.0
-    poster_b64: str = ""
+    posters_b64: list[str] = field(default_factory=list)  # one JPEG per attachment: the still, or the video's poster
     sheet_b64: str = ""
     end_b64: str = ""
-    media_mime: str = ""
     log_lines: list[str] = field(default_factory=list)
     workdir: Path | None = None
 
@@ -84,12 +103,53 @@ class Seat:
         self.log_lines.append(f"{time.strftime('%H:%M:%S')} {message}")
 
     @property
+    def media(self) -> list[MediaItem]:
+        return self.entry.media if self.entry else []
+
+    @property
     def media_kind(self) -> MediaKind:
         return self.entry.media_kind if self.entry else "none"
 
     @property
+    def media_mime(self) -> str:
+        return mime_for(self.media[0]) if self.media else ""
+
+    @property
+    def poster_b64(self) -> str:
+        return self.posters_b64[0] if self.posters_b64 else ""
+
+    @property
+    def measurement(self) -> Measurement | None:
+        return self.measurements[0] if self.measurements else None
+
+    @property
     def eligible(self) -> bool:
         return bool(self.technical and self.technical.eligible)
+
+    def media_public(self) -> list[dict[str, Any]]:
+        """The attachments as the viewers see them: index, kind, alt text, URL, poster and dimensions."""
+        out: list[dict[str, Any]] = []
+        for index, item in enumerate(self.media):
+            m = self.measurements[index] if index < len(self.measurements) else None
+            out.append(
+                {
+                    "index": index,
+                    "kind": item.kind,
+                    "alt_text": item.alt_text,
+                    "url": f"/media/{self.slot}/{index}",
+                    "path": item.display_name,
+                    "mime": mime_for(item),
+                    "poster": self.posters_b64[index] if index < len(self.posters_b64) else "",
+                    "width": m.width if m and m.ok else None,
+                    "height": m.height if m and m.ok else None,
+                    "duration": round(m.duration, 2) if m and m.ok else None,
+                }
+            )
+        return out
+
+    def media_summary(self) -> list[dict[str, Any]]:
+        """The attachments as results.json records them: path, kind, alt text."""
+        return [{"path": item.display_name, "kind": item.kind, "alt_text": item.alt_text} for item in self.media]
 
     def public(self, *, include_notes: bool) -> dict[str, Any]:
         meta = self.entry.meta if self.entry else EntryMeta(title=self.name)
@@ -108,6 +168,7 @@ class Seat:
             "kind": self.entry.kind if self.entry else "",
             "media_kind": self.media_kind,
             "media_mime": self.media_mime,
+            "media": self.media_public(),
             "duration": round(m.duration, 2) if m else None,
             "width": m.width if m else None,
             "height": m.height if m else None,
@@ -119,6 +180,7 @@ class Seat:
             "engagement": round(self.engagement, 2),
             "posted": self.post is not None,
             "post": self.post.to_dict() if self.post else None,
+            "room_ships": self.room_ships,
             "eligible": self.eligible,
         }
         if include_notes:
@@ -128,6 +190,7 @@ class Seat:
             data["craft_unavailable"] = self.craft_unavailable
             data["problems"] = list(self.entry.problems) if self.entry else []
             data["measurement"] = m.to_dict() if m else None
+            data["measurements"] = [x.to_dict() for x in self.measurements]
             data["sheet"] = self.sheet_b64
             data["end"] = self.end_b64
         return data
@@ -157,7 +220,7 @@ class Runtime:
         self.player_sockets: dict[int, set[WebSocket]] = {}
         self._task: asyncio.Task[None] | None = None
         self.tmp = Path(tempfile.mkdtemp(prefix="mkt-"))
-        self.media: dict[int, bytes] = {}
+        self.media: dict[int, list[bytes]] = {}  # per slot, the attachments' bytes in entry order
         self.on_complete: Any = None
         self.finished_at: float | None = None
         if config is not None:
@@ -267,7 +330,7 @@ class Runtime:
                 path = None
         if path is None or not path.exists():
             problem = "fatal: no player file staged for this seat"
-            seat.entry = Entry(EntryMeta(title=seat.name), None, "none", "invalid", [problem])
+            seat.entry = Entry(EntryMeta(title=seat.name), [], "invalid", [problem])
             seat.log(seat.entry.problems[0])
             return
         if not seat.content_hash:
@@ -278,41 +341,49 @@ class Runtime:
         for problem in seat.entry.problems:
             seat.log(problem)
         seat.post = self.feed.post_for(seat.content_hash)
+        seat.room_ships = self.feed.ships_for(seat.content_hash)
         if seat.post is not None:
             seat.log(
                 f"posted on @{self.feed.account or self.config.account} as {seat.post.tweet_id}: "
                 f"{json.dumps(seat.post.metrics)}"
             )
-        if seat.entry.media_path is None:
+        elif seat.room_ships:
+            seat.log(f"room: {seat.room_ships} ships on the linked forum post")
+        if not seat.entry.media:
             return
-        media = seat.entry.media_path
-        seat.measurement = measure(media, seat.entry.media_kind)
-        seat.log(f"measurement: {json.dumps(seat.measurement.to_dict())}")
-        if not seat.measurement.ok:
-            return
-        m = seat.measurement
-        seat.media_mime = MEDIA_TYPES[seat.entry.media_kind]
-        if seat.entry.media_kind == "video":
-            poster = seat.workdir / "poster.jpg"
-            if frame_at(media, min(m.duration * 0.4, max(m.duration - 0.5, 0)), poster):
-                seat.poster_b64 = base64.b64encode(poster.read_bytes()).decode()
-            sheet = seat.workdir / "sheet.jpg"
-            if contact_sheet(media, m.duration, self.config.judge.frames, sheet):
-                seat.sheet_b64 = base64.b64encode(sheet.read_bytes()).decode()
-            end = seat.workdir / "end.jpg"
-            if frame_at(media, max(m.duration - 1.0, 0), end):
-                seat.end_b64 = base64.b64encode(end.read_bytes()).decode()
-        else:
-            still = seat.workdir / "still.jpg"
-            if still_image(media, still):
-                seat.poster_b64 = base64.b64encode(still.read_bytes()).decode()
-        with suppress(OSError):
-            self.media[seat.slot] = media.read_bytes()
+        blobs: list[bytes] = []
+        for index, item in enumerate(seat.entry.media):
+            m = measure(item.path, item.kind)
+            seat.measurements.append(m)
+            label = f"media {index + 1}/{len(seat.entry.media)} ({item.display_name})"
+            seat.log(f"measurement {label}: {json.dumps(m.to_dict())}")
+            seat.posters_b64.append("")
+            blob = b""
+            with suppress(OSError):
+                blob = item.path.read_bytes()
+            blobs.append(blob)
+            if not m.ok:
+                continue
+            if item.kind == "video":
+                poster = seat.workdir / "poster.jpg"
+                if frame_at(item.path, min(m.duration * 0.4, max(m.duration - 0.5, 0)), poster):
+                    seat.posters_b64[index] = base64.b64encode(poster.read_bytes()).decode()
+                sheet = seat.workdir / "sheet.jpg"
+                if contact_sheet(item.path, m.duration, self.config.judge.frames, sheet):
+                    seat.sheet_b64 = base64.b64encode(sheet.read_bytes()).decode()
+                end = seat.workdir / "end.jpg"
+                if frame_at(item.path, max(m.duration - 1.0, 0), end):
+                    seat.end_b64 = base64.b64encode(end.read_bytes()).decode()
+            else:
+                still = seat.workdir / f"still{index}.jpg"
+                if still_image(item.path, still):
+                    seat.posters_b64[index] = base64.b64encode(still.read_bytes()).decode()
+        self.media[seat.slot] = blobs
 
     def _judge(self, seat: Seat, client: ModelClient | None) -> None:
         assert self.config is not None
         cfg = self.config
-        entry = seat.entry or Entry(EntryMeta(title=seat.name), None, "none", "invalid", ["fatal: no entry"])
+        entry = seat.entry or Entry(EntryMeta(title=seat.name), [], "invalid", ["fatal: no entry"])
         model = client.model if client is not None else ""
         if cfg.judge.use_cache and client is not None and seat.content_hash in self.feed.judge_cache:
             cached = from_cache(self.feed.judge_cache[seat.content_hash], model)
@@ -321,7 +392,7 @@ class Runtime:
                 seat.log(f"judgement reused from the feed's judge cache (rubric {RUBRIC_VERSION}, {model})")
                 return
             seat.log("judge cache entry ignored: different rubric or model")
-        seat.technical = technical_review(entry, seat.measurement, cfg.limits)
+        seat.technical = technical_review(entry, seat.measurements, cfg.limits)
         for check in seat.technical.failures:
             seat.log(f"technical: {check.id} failed: {check.detail}")
         if not seat.technical.eligible:
@@ -330,16 +401,23 @@ class Runtime:
         if client is None:
             return
         workdir = seat.workdir or self.tmp
+        stills: list[bytes] = []
+        if entry.media_kind in {"image", "gif"}:
+            for index in range(len(entry.media)):
+                still = workdir / f"still{index}.jpg"
+                if still.exists():
+                    stills.append(still.read_bytes())
         imagery = JudgeImagery(
-            still=(workdir / "still.jpg") if (workdir / "still.jpg").exists() else None,
+            stills=stills,
             sheet=(workdir / "sheet.jpg") if (workdir / "sheet.jpg").exists() else None,
             end=(workdir / "end.jpg") if (workdir / "end.jpg").exists() else None,
         )
-        if entry.media_path is not None and imagery.still is None and imagery.sheet is None:
+        rendered = imagery.sheet is not None if entry.media_kind == "video" else len(stills) == len(entry.media)
+        if entry.media and not rendered:
             seat.craft_unavailable = True
             seat.log("craft panel skipped: media could not be rendered for the judge")
             return
-        seat.craft = craft_review(client, entry, seat.measurement, imagery, cfg.brief, cfg.account, slot=seat.slot)
+        seat.craft = craft_review(client, entry, seat.measurements, imagery, cfg.brief, cfg.account, slot=seat.slot)
         if seat.craft is None:
             seat.craft_unavailable = client.available
             seat.log("craft panel unavailable; judged on the technical panel only")
@@ -350,13 +428,15 @@ class Runtime:
         assert self.config is not None
         cfg = self.config
         seat.judge = judge_score(seat.technical, seat.craft, cfg.judge) if seat.technical else 0.0
-        seat.engagement = engagement_score(seat.post.metrics if seat.post else None, cfg.engagement)
+        seat.engagement = seat_engagement(seat.post.metrics if seat.post else None, seat.room_ships, cfg.engagement)
         seat.score = blend(seat.judge, seat.engagement, cfg.engagement) if seat.eligible else 0.0
         seat.status = "judged" if seat.eligible else "failed"
+        source = "X metrics" if seat.post else f"room, {seat.room_ships} ships"
         seat.log(
             f"score {seat.score:.1f} = judge {seat.judge:.1f} "
             f"(technical {seat.technical.score if seat.technical else 0:.0f}, "
-            f"craft {seat.craft.score if seat.craft else 'n/a'}) blended with engagement {seat.engagement:.1f}"
+            f"craft {seat.craft.score if seat.craft else 'n/a'}) blended with engagement {seat.engagement:.1f} "
+            f"({source})"
         )
 
     # ------------------------------------------------------------------ outputs
@@ -391,6 +471,8 @@ class Runtime:
             "labels": [(s.entry.meta.label if s.entry else s.name) for s in self.seats],
             "texts": [(s.entry.meta.text if s.entry else "") for s in self.seats],
             "media_kinds": [s.media_kind for s in self.seats],
+            "media": [s.media_summary() for s in self.seats],
+            "room_ships": [s.room_ships for s in self.seats],
             "content_hashes": [s.content_hash for s in self.seats],
             "verdicts": [(s.craft.verdict if s.craft else self._technical_verdict(s)) for s in self.seats],
             "judge_records": [
@@ -443,15 +525,16 @@ class Runtime:
             "media": {},
         }
         if include_media and self.results is not None:
+            # A seat's attachments travel together or not at all, so a grid is never half-embedded.
             budget = self.config.replay_media_budget_bytes
             order = sorted(self.seats, key=lambda s: (-s.score, s.slot))
             used = 0
             for seat in order:
-                blob = self.media.get(seat.slot)
-                if blob is None or used + len(blob) > budget:
+                blobs = self.media.get(seat.slot)
+                if not blobs or used + sum(len(b) for b in blobs) > budget:
                     continue
-                payload["media"][str(seat.slot)] = base64.b64encode(blob).decode()
-                used += len(blob)
+                payload["media"][str(seat.slot)] = [base64.b64encode(b).decode() for b in blobs]
+                used += sum(len(b) for b in blobs)
         return payload
 
     def _write_outputs(self) -> None:
@@ -500,11 +583,18 @@ class Runtime:
     def _write_artifact(self, seat: Seat) -> None:
         assert seat.entry is not None
         path = self.tmp / f"artifact{seat.slot}.zip"
+        # The artifact's entry.json names the attachments exactly as the archive carries them, so it reloads as a
+        # current-schema package whatever shape the entrant uploaded.
+        meta = seat.entry.meta.model_copy(
+            update={"media": [MediaMeta(path=item.display_name, alt_text=item.alt_text) for item in seat.entry.media]}
+        )
+        blobs = self.media.get(seat.slot, [])
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("entry.json", seat.entry.meta.model_dump_json(by_alias=True, indent=2))
+            archive.writestr("entry.json", meta.model_dump_json(by_alias=True, indent=2))
             archive.writestr("judge.json", json.dumps(seat.public(include_notes=True), indent=2))
-            if seat.slot in self.media and seat.entry.media_path is not None:
-                archive.writestr(seat.entry.media_path.name, self.media[seat.slot])
+            for item, blob in zip(seat.entry.media, blobs, strict=False):
+                if blob:
+                    archive.writestr(item.display_name, blob)
         write_data(seat.artifact_uri, path.read_bytes(), content_type="application/zip")
 
     # ------------------------------------------------------------------ live surfaces
@@ -597,18 +687,25 @@ class Runtime:
         payload = self.replay if self.replay is not None else self.replay_payload(include_media=True)
         return json.dumps(payload, separators=(",", ":")).encode()
 
-    def media_bytes(self, slot: int) -> tuple[bytes, str] | None:
+    def media_bytes(self, slot: int, index: int = 0) -> tuple[bytes, str] | None:
+        if index < 0:
+            return None
         if self.replay is not None:
             encoded = (self.replay.get("media") or {}).get(str(slot))
-            entries = self.replay.get("entries") or []
-            mime = (
-                next((e.get("media_mime") for e in entries if e.get("slot") == slot), "") or "application/octet-stream"
-            )
-            return (base64.b64decode(encoded), mime) if encoded else None
-        blob = self.media.get(slot)
-        if blob is None:
+            if isinstance(encoded, str):  # replay version 2: one attachment per seat
+                encoded = [encoded]
+            if not encoded or index >= len(encoded):
+                return None
+            entry = next((e for e in (self.replay.get("entries") or []) if e.get("slot") == slot), {})
+            items = entry.get("media") or []
+            mime = (items[index].get("mime") if index < len(items) else "") or entry.get("media_mime") or ""
+            return base64.b64decode(encoded[index]), (mime or "application/octet-stream")
+        blobs = self.media.get(slot) or []
+        if index >= len(blobs) or not blobs[index]:
             return None
-        return blob, (self.seats[slot].media_mime or "application/octet-stream")
+        items = self.seats[slot].media
+        mime = mime_for(items[index]) if index < len(items) else "application/octet-stream"
+        return blobs[index], mime
 
 
 def runtime_from_environment() -> Runtime:
@@ -660,10 +757,14 @@ def create_app(runtime: Runtime) -> FastAPI:
         return Response(runtime.replay_json(), media_type="application/json")
 
     @app.get("/media/{slot}")
-    def media(slot: int) -> Response:
-        found = runtime.media_bytes(slot)
+    def media_first(slot: int) -> Response:
+        return media(slot, 0)
+
+    @app.get("/media/{slot}/{index}")
+    def media(slot: int, index: int) -> Response:
+        found = runtime.media_bytes(slot, index)
         if found is None:
-            raise HTTPException(status_code=404, detail="no media for this seat")
+            raise HTTPException(status_code=404, detail="no media at this index for this seat")
         blob, mime = found
         return Response(blob, media_type=mime)
 

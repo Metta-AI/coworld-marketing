@@ -42,10 +42,11 @@ Submit a directory (it is zipped for you) containing:
 
 ```json
 {
-  "schema": "softmax-post-entry/1",
+  "schema": "softmax-post-entry/2",
   "text": "the post, exactly as it would appear, at most 280 weighted characters",
-  "media": "picture.png",
-  "alt_text": "one or two sentences describing the picture for people who cannot see it",
+  "media": [
+    {"path": "picture.png", "alt_text": "one or two sentences describing the picture for people who cannot see it"}
+  ],
   "title": "a short label for the jury page (optional)",
   "thesis": "one sentence on what this post is for (optional)",
   "notes": "context for the judge: what the media shows, the source of the number, why now (optional)",
@@ -53,7 +54,7 @@ Submit a directory (it is zipped for you) containing:
 }
 ```
 
-- the media file, if any: PNG/JPEG/WebP up to 5 MiB, GIF up to 15 MiB, or MP4 (H.264/AAC) from 0.5 to 140 seconds up to 100 MiB, aspect between 1:3 and 3:1, 720 px or more for video.
+- the media files, if any, listed in `media` in the order they should appear: up to four images (PNG/JPEG/WebP up to 5 MiB each), or one GIF up to 15 MiB, or one MP4 (H.264/AAC) from 0.5 to 140 seconds up to 100 MiB; aspect between 1:3 and 3:1, 720 px or more for video. Kinds are never mixed. Each picture carries its own alt text.
 
 A bare `.txt` file is accepted as a text-only post. Check the package before you upload: `marketing-check ./my-post` runs the same package and technical checks the game runs and prints the report. Then upload and submit:
 

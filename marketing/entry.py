@@ -1,4 +1,14 @@
-"""Load one submitted player file: a zip with entry.json and optional media, a bare media file, or bare text."""
+"""Load one submitted player file: a zip with entry.json and optional media, a bare media file, or bare text.
+
+Three entry.json schemas load here and all normalise into one in-memory `Entry` whose `media` is a list:
+
+- `softmax-post-entry/2` (current): `media` is a list of `{path, alt_text}` objects, so a post can carry up to four
+  images the way X does. A video or a gif must be the only item; kinds are never mixed.
+- `softmax-post-entry/1`: a single `media` path (or null) with one top-level `alt_text`.
+- `softmax-video-entry/1`: the video league's package; `post` is the text, `video` the media, `script` the notes.
+
+Validation problems are written as sentences because they surface to the submitter in the seat log and the jury.
+"""
 
 from __future__ import annotations
 
@@ -13,8 +23,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from marketing.config import Limits, MediaKind
 
-ENTRY_SCHEMA = "softmax-post-entry/1"
+ENTRY_SCHEMA = "softmax-post-entry/2"
+ENTRY_SCHEMA_V1 = "softmax-post-entry/1"
 LEGACY_VIDEO_SCHEMA = "softmax-video-entry/1"
+ACCEPTED_SCHEMAS = (ENTRY_SCHEMA, ENTRY_SCHEMA_V1, LEGACY_VIDEO_SCHEMA)
+MAX_MEDIA_ITEMS = 4
 MAX_ZIP_MEMBERS = 200
 MAX_UNPACKED_BYTES = 160 * 1024 * 1024
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
@@ -23,6 +36,18 @@ GIF_SUFFIXES = {".gif"}
 MEDIA_SUFFIXES = VIDEO_SUFFIXES | IMAGE_SUFFIXES | GIF_SUFFIXES
 URL_RE = re.compile(r"https?://\S+|(?<![\w@])(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/\S*)?", re.IGNORECASE)
 HASHTAG_RE = re.compile(r"(?<!\w)#\w+")
+MEDIA_RULE = (
+    f"a post carries up to {MAX_MEDIA_ITEMS} images (png/jpg/jpeg/webp), or exactly one video, or exactly one gif"
+)
+
+
+class MediaMeta(BaseModel):
+    """One attachment as named in entry.json."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=400, description="Relative path of the file inside the package.")
+    alt_text: str = Field(default="", max_length=1500, description="Accessibility text for this attachment.")
 
 
 class EntryMeta(BaseModel):
@@ -30,8 +55,11 @@ class EntryMeta(BaseModel):
 
     schema_: str = Field(default=ENTRY_SCHEMA, alias="schema")
     text: str = Field(default="", max_length=2000, description="The post text as it would appear on X.")
-    media: str | None = Field(default=None, description="Media file inside the package, or null for a text-only post.")
-    alt_text: str = Field(default="", max_length=1500, description="Alt text for the media.")
+    media: list[MediaMeta] = Field(
+        default_factory=list,
+        max_length=32,
+        description=f"Attachments inside the package, in display order; {MEDIA_RULE}.",
+    )
     title: str = Field(
         default="", max_length=120, description="Optional label for the jury page; defaults to the text."
     )
@@ -47,12 +75,59 @@ class EntryMeta(BaseModel):
         first = " ".join(self.text.strip().split())
         return (first[:57] + "...") if len(first) > 60 else first or "Untitled post"
 
+    @property
+    def alt_text(self) -> str:
+        """The first attachment's alt text; kept for callers written against the single-media schema."""
+        return self.media[0].alt_text if self.media else ""
+
+
+class _EntryMetaV1(BaseModel):
+    """The single-media schema, validated on its own terms before it is converted."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: str = Field(alias="schema")
+    text: str = Field(default="", max_length=2000)
+    media: str | None = None
+    alt_text: str = Field(default="", max_length=1500)
+    title: str = Field(default="", max_length=120)
+    thesis: str = Field(default="", max_length=400)
+    notes: str = Field(default="", max_length=4000)
+    credits: str = Field(default="", max_length=400)
+    made_with: list[str] = Field(default_factory=list, max_length=20)
+
+    def to_current(self) -> EntryMeta:
+        media = [MediaMeta(path=self.media, alt_text=self.alt_text)] if self.media else []
+        return EntryMeta(
+            schema=ENTRY_SCHEMA,
+            text=self.text,
+            media=media,
+            title=self.title,
+            thesis=self.thesis,
+            notes=self.notes,
+            credits=self.credits,
+            made_with=self.made_with,
+        )
+
+
+@dataclass(frozen=True)
+class MediaItem:
+    """One resolved attachment: where the bytes are, what they are, and how the entrant described them."""
+
+    path: Path
+    kind: MediaKind
+    alt_text: str = ""
+    name: str = ""  # the path as named in the package; the artifact zip writes the file under this name
+
+    @property
+    def display_name(self) -> str:
+        return self.name or self.path.name
+
 
 @dataclass
 class Entry:
     meta: EntryMeta
-    media_path: Path | None
-    media_kind: MediaKind
+    media: list[MediaItem]
     kind: str  # "zip" | "media" | "text" | "invalid"
     problems: list[str] = field(default_factory=list)
 
@@ -62,7 +137,17 @@ class Entry:
 
     @property
     def valid(self) -> bool:
-        return not self.fatal and (bool(self.meta.text.strip()) or self.media_path is not None)
+        return not self.fatal and (bool(self.meta.text.strip()) or bool(self.media))
+
+    @property
+    def media_kind(self) -> MediaKind:
+        """The kind shared by every attachment ("image" for one to four pictures), or "none"."""
+        return self.media[0].kind if self.media else "none"
+
+    @property
+    def media_path(self) -> Path | None:
+        """The first attachment's path; kept for callers written against the single-media schema."""
+        return self.media[0].path if self.media else None
 
 
 def weighted_length(text: str) -> int:
@@ -132,6 +217,12 @@ def sniff_media(head: bytes) -> MediaKind:
     return "none"
 
 
+def _kind_of(path: Path) -> MediaKind:
+    with path.open("rb") as handle:
+        sniffed = sniff_media(handle.read(16))
+    return sniffed if sniffed != "none" else media_kind_for(path)
+
+
 def _safe_extract(zip_path: Path, dest: Path) -> list[str]:
     with zipfile.ZipFile(zip_path) as archive:
         members = archive.infolist()
@@ -174,9 +265,17 @@ def _find_entry_root(dest: Path) -> Path:
     return dest
 
 
-def _single_media(root: Path) -> Path | None:
-    files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES)
-    return files[0] if len(files) == 1 else None
+def _package_media(root: Path) -> list[Path]:
+    """Every file in the package whose suffix says media, in a stable order."""
+    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES)
+
+
+def _describe(error: ValidationError) -> str:
+    parts = []
+    for item in error.errors()[:5]:
+        where = ".".join(str(x) for x in item["loc"] if x != "schema_") or "entry.json"
+        parts.append(f"{where}: {item['msg']}")
+    return "; ".join(parts)
 
 
 def _parse_meta(raw: str, problems: list[str]) -> EntryMeta:
@@ -188,10 +287,11 @@ def _parse_meta(raw: str, problems: list[str]) -> EntryMeta:
     if not isinstance(data, dict):
         problems.append("entry.json is not an object; using defaults")
         return EntryMeta()
-    if data.get("schema") == LEGACY_VIDEO_SCHEMA:
+    schema = data.get("schema")
+    if schema == LEGACY_VIDEO_SCHEMA:
         # A video-era package: the post text is the tweet, the video is the media.
         data = {
-            "schema": ENTRY_SCHEMA,
+            "schema": ENTRY_SCHEMA_V1,
             "text": data.get("post", ""),
             "media": data.get("video", "video.mp4"),
             "alt_text": data.get("alt_text", ""),
@@ -202,14 +302,25 @@ def _parse_meta(raw: str, problems: list[str]) -> EntryMeta:
             "made_with": data.get("made_with", []),
         }
         problems.append("legacy softmax-video-entry/1 package read as a video post")
+        schema = ENTRY_SCHEMA_V1
+    elif schema not in ACCEPTED_SCHEMAS:
+        problems.append(
+            f"entry.json schema is {schema!r}; expected {ENTRY_SCHEMA!r} (or the older {ENTRY_SCHEMA_V1!r}); "
+            f"reading it as {ENTRY_SCHEMA!r}"
+        )
+        data = {**data, "schema": ENTRY_SCHEMA}
     try:
-        meta = EntryMeta.model_validate(data)
+        if schema == ENTRY_SCHEMA_V1:
+            return _EntryMetaV1.model_validate(data).to_current()
+        return EntryMeta.model_validate(data)
     except ValidationError as error:
-        problems.append("entry.json failed validation: " + "; ".join(e["msg"] for e in error.errors()[:5]))
-        return EntryMeta(text=str(data.get("text", ""))[:2000]) if isinstance(data.get("text"), str) else EntryMeta()
-    if meta.schema_ != ENTRY_SCHEMA:
-        problems.append(f"entry.json schema is {meta.schema_!r}; expected {ENTRY_SCHEMA!r}")
-    return meta
+        problems.append(f"entry.json failed validation ({_describe(error)}); using the text only")
+        text = data.get("text")
+        return EntryMeta(text=text[:2000]) if isinstance(text, str) else EntryMeta()
+
+
+def _invalid(default_title: str, problem: str) -> Entry:
+    return Entry(EntryMeta(title=default_title), [], "invalid", [problem])
 
 
 def load_entry(file_path: Path, workdir: Path, limits: Limits, *, default_title: str) -> Entry:
@@ -218,63 +329,52 @@ def load_entry(file_path: Path, workdir: Path, limits: Limits, *, default_title:
     try:
         size = file_path.stat().st_size
     except OSError as error:
-        return Entry(
-            EntryMeta(title=default_title), None, "none", "invalid", [f"fatal: cannot stat player file ({error})"]
-        )
+        return _invalid(default_title, f"fatal: cannot stat player file ({error})")
     if size == 0:
-        return Entry(EntryMeta(title=default_title), None, "none", "invalid", ["fatal: player file is empty"])
+        return _invalid(default_title, "fatal: player file is empty")
     if size > limits.max_file_bytes:
-        return Entry(
-            EntryMeta(title=default_title),
-            None,
-            "none",
-            "invalid",
-            [f"fatal: player file is {size} bytes (limit {limits.max_file_bytes})"],
-        )
+        return _invalid(default_title, f"fatal: player file is {size} bytes (limit {limits.max_file_bytes})")
     with file_path.open("rb") as handle:
         head = handle.read(16)
 
     kind = sniff_media(head)
     if kind != "none":
-        return Entry(EntryMeta(title=default_title), file_path, kind, "media", ["note: bare media file, no post text"])
+        item = MediaItem(file_path, kind, "", file_path.name)
+        return Entry(EntryMeta(title=default_title), [item], "media", ["note: bare media file, no post text"])
 
     if head[:2] == b"PK":
-        return _load_zip(file_path, workdir, default_title)
+        return _load_zip(file_path, workdir, limits, default_title)
 
     # Bare text: entry.json on its own, or the post text as a plain file.
     try:
         text = file_path.read_bytes().decode("utf-8")
     except UnicodeDecodeError:
-        return Entry(
-            EntryMeta(title=default_title),
-            None,
-            "none",
-            "invalid",
-            ["fatal: player file is neither media (mp4/mov/webm/png/jpg/webp/gif), a zip package, nor UTF-8 text"],
+        return _invalid(
+            default_title,
+            "fatal: player file is neither media (mp4/mov/webm/png/jpg/webp/gif), a zip package, nor UTF-8 text",
         )
     problems: list[str] = []
     stripped = text.strip()
     if stripped.startswith("{"):
         meta = _parse_meta(stripped, problems)
         if meta.media:
-            problems.append(f"fatal: entry.json names media {meta.media!r} but was uploaded without a package")
-            return Entry(meta, None, "none", "invalid", problems)
-        return Entry(meta, None, "none", "text", problems)
+            named = ", ".join(repr(m.path) for m in meta.media)
+            problems.append(f"fatal: entry.json names media {named} but was uploaded without a package")
+            return Entry(meta, [], "invalid", problems)
+        return Entry(meta, [], "text", problems)
     if len(stripped) > 2000:
-        return Entry(
-            EntryMeta(title=default_title), None, "none", "invalid", ["fatal: text file is longer than 2000 characters"]
-        )
-    return Entry(EntryMeta(text=stripped), None, "none", "text", ["note: bare text file read as the post text"])
+        return _invalid(default_title, "fatal: text file is longer than 2000 characters")
+    return Entry(EntryMeta(text=stripped), [], "text", ["note: bare text file read as the post text"])
 
 
-def _load_zip(file_path: Path, workdir: Path, default_title: str) -> Entry:
+def _load_zip(file_path: Path, workdir: Path, limits: Limits, default_title: str) -> Entry:
     dest = workdir / "unpacked"
     try:
         problems = _safe_extract(file_path, dest)
     except zipfile.BadZipFile as error:
-        return Entry(EntryMeta(title=default_title), None, "none", "invalid", [f"fatal: bad zip ({error})"])
+        return _invalid(default_title, f"fatal: bad zip ({error})")
     if any(p.startswith("fatal:") for p in problems):
-        return Entry(EntryMeta(title=default_title), None, "none", "invalid", problems)
+        return Entry(EntryMeta(title=default_title), [], "invalid", problems)
 
     root = _find_entry_root(dest)
     entry_json = root / "entry.json"
@@ -288,35 +388,78 @@ def _load_zip(file_path: Path, workdir: Path, default_title: str) -> Entry:
         problems.append("no entry.json in package; using defaults")
         meta = EntryMeta()
 
-    media_path: Path | None = None
-    if meta.media:
-        candidate = (root / meta.media).resolve()
-        if candidate.is_relative_to(root.resolve()) and candidate.is_file():
-            media_path = candidate
-        else:
-            fallback = _single_media(root)
-            if fallback is None:
-                problems.append(f"fatal: media {meta.media!r} not found in package")
-                return Entry(meta, None, "none", "invalid", problems)
-            problems.append(
-                f"media {meta.media!r} not found; using the only media file in the package ({fallback.name})"
-            )
-            media_path = fallback
-    else:
-        fallback = _single_media(root)
-        if fallback is not None:
-            problems.append(f"entry.json names no media; using the only media file in the package ({fallback.name})")
-            media_path = fallback
-
-    media_kind: MediaKind = "none"
-    if media_path is not None:
-        with media_path.open("rb") as handle:
-            sniffed = sniff_media(handle.read(16))
-        media_kind = sniffed if sniffed != "none" else media_kind_for(media_path)
-        if media_kind == "none":
-            problems.append(f"fatal: media {media_path.name!r} is not a recognised image, gif or video")
-            return Entry(meta, None, "none", "invalid", problems)
-    if not meta.text.strip() and media_path is None:
+    media = _resolve_media(root, meta, limits, problems)
+    if media is None:
+        return Entry(meta, [], "invalid", problems)
+    if not meta.text.strip() and not media:
         problems.append("fatal: package has neither post text nor media")
-        return Entry(meta, None, "none", "invalid", problems)
-    return Entry(meta, media_path, media_kind, "zip", problems)
+        return Entry(meta, [], "invalid", problems)
+    return Entry(meta, media, "zip", problems)
+
+
+def _resolve_media(root: Path, meta: EntryMeta, limits: Limits, problems: list[str]) -> list[MediaItem] | None:
+    """Turn the names in entry.json into checked attachments; None (with a fatal problem) when the post cannot run."""
+    root_resolved = root.resolve()
+    present = _package_media(root)
+    if not meta.media:
+        if not present:
+            return []
+        if len(present) > 1:
+            names = ", ".join(p.relative_to(root).as_posix() for p in present[:6])
+            problems.append(
+                f"fatal: the package contains {len(present)} media files ({names}) but entry.json names none; "
+                "name the media files in entry.json, in the order they should appear"
+            )
+            return None
+        only = present[0]
+        name = only.relative_to(root).as_posix()
+        problems.append(f"entry.json names no media; using the only media file in the package ({only.name})")
+        item = MediaItem(only, _kind_of(only), "", name)
+        return [item] if _check_kinds([(name, item.kind)], problems) else None
+
+    limit = min(limits.max_media_items, MAX_MEDIA_ITEMS)
+    if len(meta.media) > limit:
+        problems.append(f"fatal: entry.json lists {len(meta.media)} media files; {MEDIA_RULE}")
+        return None
+
+    items: list[MediaItem] = []
+    seen: dict[Path, str] = {}
+    for spec in meta.media:
+        candidate = (root / spec.path).resolve()
+        if not (candidate.is_relative_to(root_resolved) and candidate.is_file()):
+            if len(meta.media) == 1 and len(present) == 1:
+                candidate = present[0]
+                problems.append(
+                    f"media {spec.path!r} not found; using the only media file in the package ({candidate.name})"
+                )
+            else:
+                problems.append(f"fatal: media {spec.path!r} is named in entry.json but is not in the package")
+                return None
+        if candidate in seen:
+            problems.append(f"fatal: media {spec.path!r} is listed twice in entry.json (also as {seen[candidate]!r})")
+            return None
+        seen[candidate] = spec.path
+        name = candidate.relative_to(root_resolved).as_posix()
+        items.append(MediaItem(candidate, _kind_of(candidate), spec.alt_text, name))
+
+    if not _check_kinds([(item.name, item.kind) for item in items], problems):
+        return None
+    return items
+
+
+def _check_kinds(named: list[tuple[str, MediaKind]], problems: list[str]) -> bool:
+    """One to four images, or one video, or one gif; every file recognised."""
+    for name, kind in named:
+        if kind == "none":
+            problems.append(f"fatal: media {name!r} is not a recognised image, gif or video")
+            return False
+    kinds = {kind for _, kind in named}
+    if len(kinds) > 1:
+        listing = ", ".join(f"{name} ({kind})" for name, kind in named)
+        problems.append(f"fatal: media kinds cannot be mixed in one post ({listing}); {MEDIA_RULE}")
+        return False
+    if len(named) > 1 and kinds & {"video", "gif"}:
+        kind = next(iter(kinds))
+        problems.append(f"fatal: a {kind} must be the only attachment, but entry.json lists {len(named)}; {MEDIA_RULE}")
+        return False
+    return True

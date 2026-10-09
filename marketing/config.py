@@ -67,6 +67,12 @@ class EngagementConfig(BaseModel):
         default=None,
         description="Where to read the engagement feed. Null means the ENGAGEMENT_FEED_URI environment variable.",
     )
+    room_points_per_ship: float = Field(
+        default=10.0,
+        ge=0,
+        description="Engagement points per ship vote in the room (the forum post linked to the entry) while the "
+        "post is not yet live on X; capped at 100. Once posted, X metrics replace the room.",
+    )
 
 
 class Limits(BaseModel):
@@ -74,6 +80,7 @@ class Limits(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    max_media_items: int = Field(default=4, ge=1, le=4, description="X attaches up to four images to one post.")
     max_file_bytes: int = Field(default=100 * MIB, ge=MIB, description="Uploaded player file ceiling.")
     text_max_weighted_chars: int = Field(default=280, ge=1)
     alt_text_max_chars: int = Field(default=1000, ge=1)

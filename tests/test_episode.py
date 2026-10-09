@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import zipfile
 from pathlib import Path
 
 import jsonschema
@@ -70,10 +71,23 @@ async def test_certification_shaped_episode(root: Path, template: dict, episode_
     status = json.loads((tmp / "player_status.json").read_text())
     assert [p["state"] for p in status["players"]] == ["exited"] * 3
 
+    assert results["media"] == [
+        [{"path": "video.mp4", "kind": "video", "alt_text": results["media"][0][0]["alt_text"]}],
+        [{"path": "video.mp4", "kind": "video", "alt_text": results["media"][1][0]["alt_text"]}],
+        [],
+    ]
+    assert results["media"][0][0]["alt_text"].startswith("Five small ceramic agents")
+    assert results["room_ships"] == [0, 0, 0]
+
     replay = decode_replay_bytes((tmp / "replay").read_bytes())
-    assert replay["game"] == "marketing" and replay["version"] == 2
+    assert replay["game"] == "marketing" and replay["version"] == 3
     assert len(replay["entries"]) == 3 and replay["results"] == results
     assert set(replay["media"]) == {"0", "1"}
+    assert all(isinstance(v, list) and len(v) == 1 for v in replay["media"].values())
+    first = replay["entries"][0]["media"]
+    assert len(first) == 1 and first[0]["index"] == 0 and first[0]["kind"] == "video"
+    assert first[0]["url"] == "/media/0/0"
+    assert runtime.media_bytes(0) == runtime.media_bytes(0, 0) and runtime.media_bytes(0, 1) is None
     assert "tokens" not in replay["config"]
     assert replay["entries"][0]["poster"] and replay["entries"][0]["sheet"]
     assert replay["entries"][2]["text"].startswith("We measure alignment")
@@ -181,3 +195,81 @@ async def test_single_seat_grade_variant(root: Path, template: dict, episode_env
     results = json.loads((tmp / "results.json").read_text())
     jsonschema.validate(results, template["game"]["results_schema"])
     assert results["eligible"] == [True] and results["technical"] == [100.0]
+
+
+def _image_zip(tmp: Path, tiny_image: Path, names: list[str]) -> Path:
+    meta = {
+        "schema": "softmax-post-entry/2",
+        "text": "Three agents, three ways of waiting. softmax.com",
+        "media": [{"path": n, "alt_text": f"alt for {n}"} for n in names],
+        "title": "Three ways of waiting",
+    }
+    package = tmp / "images.zip"
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("entry.json", json.dumps(meta))
+        for name in names:
+            archive.writestr(name, tiny_image.read_bytes())
+    return package
+
+
+async def test_multi_image_entry_with_room_ships(
+    root: Path, template: dict, episode_env: Path, tiny_image: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three pictures in one post, graded on the technical panel, with ships from the room as its engagement."""
+    tmp = episode_env
+    names = ["one.png", "two.png", "three.png"]
+    package = _image_zip(tmp, tiny_image, names)
+    plain = pack_directory(root / "players/plain-post")
+    images_hash, plain_hash = "sha256:" + "c" * 64, "sha256:" + "d" * 64
+    feed = {
+        "schema": FEED_SCHEMA,
+        "account": "softmaxresearch",
+        "generated_at": "2026-10-09T01:00:00Z",
+        "posts": {},
+        "judge_cache": {},
+        "room": {images_hash: {"ships": 3, "updated_at": "2026-10-09T01:00:00Z"}, plain_hash: {"ships": 12}},
+    }
+    (tmp / "feed.json").write_text(json.dumps(feed))
+    monkeypatch.setenv("ENGAGEMENT_FEED_URI", f"file://{tmp}/feed.json")
+    config = GameConfig.model_validate(
+        {
+            **template["variants"][2]["game_config"],
+            "tokens": ["a", "b"],
+            "players": [{"name": "A"}, {"name": "B"}],
+            "linger_seconds": 0,
+        }
+    )
+    runtime = Runtime(config, seats_doc=_seats_doc(tmp, [package, plain], hashes=[images_hash, plain_hash]))
+    await runtime.run_episode()
+    results = json.loads((tmp / "results.json").read_text())
+    jsonschema.validate(results, template["game"]["results_schema"])
+    assert results["eligible"] == [True, True]
+    assert results["media_kinds"] == ["image", "none"]
+    assert results["media"][0] == [{"path": n, "kind": "image", "alt_text": f"alt for {n}"} for n in names]
+    assert results["media"][1] == []
+    assert results["room_ships"] == [3, 12] and results["posted"] == [False, False]
+    assert results["engagement"] == [30.0, 100.0]
+    assert results["scores"] == [round(0.5 * results["judge"][0] + 15.0, 2), round(0.5 * results["judge"][1] + 50.0, 2)]
+    assert results["technical"][0] == 100.0
+
+    # Every attachment is served by index and embedded in the replay in order.
+    for index in range(3):
+        found = runtime.media_bytes(0, index)
+        assert found is not None and found[0] == tiny_image.read_bytes() and found[1] == "image/png"
+    assert runtime.media_bytes(0, 3) is None and runtime.media_bytes(1, 0) is None
+    replay = decode_replay_bytes((tmp / "replay").read_bytes())
+    assert len(replay["media"]["0"]) == 3 and "1" not in replay["media"]
+    entry = replay["entries"][0]
+    assert [m["url"] for m in entry["media"]] == ["/media/0/0", "/media/0/1", "/media/0/2"]
+    assert [m["alt_text"] for m in entry["media"]] == [f"alt for {n}" for n in names]
+    assert all(m["poster"] and m["width"] == 640 for m in entry["media"])
+    assert entry["poster"] == entry["media"][0]["poster"] and len(entry["measurements"]) == 3
+    assert entry["room_ships"] == 3
+
+    # The artifact carries all three pictures and an entry.json that names them.
+    with zipfile.ZipFile(tmp / "policy_artifact_0.zip") as archive:
+        assert set(archive.namelist()) == {"entry.json", "judge.json", *names}
+        meta = json.loads(archive.read("entry.json"))
+        assert meta["schema"] == "softmax-post-entry/2" and [m["path"] for m in meta["media"]] == names
+    log = (tmp / "logs/policy_agent_0.log").read_text()
+    assert "room: 3 ships" in log and "measurement media 2/3 (two.png)" in log

@@ -1,8 +1,12 @@
 {
-  "schema": "softmax-post-entry/1",
+  "schema": "softmax-post-entry/2",
   "text": "Nobody dances alone. A disco-pop short about an agent learning to read a room by being in one. softmax.com",
-  "media": "video.mp4",
-  "alt_text": "A stylised 3D agent dances alone in a grey room, then learns to read a crowded party: watching hands, eyes and the way people lean. Kinetic lyric typography on cream and pink.",
+  "media": [
+    {
+      "path": "video.mp4",
+      "alt_text": "A stylised 3D agent dances alone in a grey room, then learns to read a crowded party: watching hands, eyes and the way people lean. Kinetic lyric typography on cream and pink."
+    }
+  ],
   "title": "Read the Room",
   "thesis": "Nobody dances alone.",
   "notes": "Okay. First rule. Nobody dances alone. I took you to a table, you shook twenty hands too long. I took you to a poker night, you showed them all your cards. I took you to a dinner and you ate the centrepiece. Baby you can do the math, but you can't do the people. Don't look at me, look at them. Watch the hands, watch the eyes, watch the way they lean. Read the room, before you make a move. Everybody's talking with their bodies, it's a groove. Read the room, yeah you'll get it wrong, that's cool. Then you carry what you learned out of the door and into the world.",

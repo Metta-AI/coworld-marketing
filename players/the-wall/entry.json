@@ -1,8 +1,12 @@
 {
-  "schema": "softmax-post-entry/1",
+  "schema": "softmax-post-entry/2",
   "text": "Flint is the fastest over the wall. Pip is the slowest. The clock stops when the last of them is over. Seventy-seven seconds on what alignment looks like when you learn it with others. softmax.com",
-  "media": "video.mp4",
-  "alt_text": "Five small ceramic agents at the foot of a paper wall with a sand timer. The fast one, Flint, learns to make a step with his hands for the smallest one, Pip, who narrates.",
+  "media": [
+    {
+      "path": "video.mp4",
+      "alt_text": "Five small ceramic agents at the foot of a paper wall with a sand timer. The fast one, Flint, learns to make a step with his hands for the smallest one, Pip, who narrates."
+    }
+  ],
   "title": "The Wall",
   "thesis": "Alignment is something you learn with others.",
   "notes": "The game's simple. There's a wall. The clock stops when the last of us is over. The last of us is me. Flint was over before I'd finished jumping. He's new. He's amazing. He waited on the far side, where the clock was still running. We lose because of me. I know. Everyone's very nice about it. Flint thought the problem was speed. He practised. He got over in one point four seconds. I got over in never. On the fifth night, he didn't jump. He stood there, and watched Ollie put his back against the wall so Marrow could stand on it. I'd seen Ollie do that a hundred times. Flint had never been slow enough to see it. Then he put his hands together. Like a step. For me. I'd never seen anything from the top of the wall. The clock stopped with sand still in it. Our best ever. Flint went last. He'd never gone last. He's still the fastest over the wall. He's just not finished until I am.",

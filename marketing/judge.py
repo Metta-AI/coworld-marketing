@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from importlib import resources
@@ -17,12 +18,12 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from marketing.config import JudgeConfig, Limits
-from marketing.entry import Entry, count_hashtags, count_links, weighted_length
+from marketing.entry import Entry, MediaItem, count_hashtags, count_links, weighted_length
 from marketing.probe import Measurement
 
 logger = logging.getLogger("marketing.judge")
 
-RUBRIC_VERSION = "post/1"
+RUBRIC_VERSION = "post/2"
 CRAFT_KEYS = ("hook", "specific", "voice", "legible", "craft", "repostable")
 CRAFT_WEIGHTS = {
     "hook": 0.20,
@@ -68,7 +69,24 @@ class TechnicalReview:
         return [c for c in self.checks if not c.ok]
 
 
-def technical_review(entry: Entry, m: Measurement | None, limits: Limits) -> TechnicalReview:
+def as_measurements(m: Sequence[Measurement] | Measurement | None) -> list[Measurement]:
+    """Callers written for one attachment pass a Measurement or None; the review works on a list, one per item."""
+    if m is None:
+        return []
+    if isinstance(m, Measurement):
+        return [m]
+    return list(m)
+
+
+def item_label(item: MediaItem, index: int, count: int) -> str:
+    """How the checks name an attachment: silent for a lone item, "image 2/3 (b.jpg)" when there are several."""
+    return "" if count < 2 else f"{item.kind} {index + 1}/{count} ({item.display_name})"
+
+
+def technical_review(entry: Entry, m: Sequence[Measurement] | Measurement | None, limits: Limits) -> TechnicalReview:
+    """The deterministic panel. Text checks run once; media checks run per attachment and the entry's score is the
+    minimum across attachments, so one bad image fails the post and its check names the item that failed."""
+    measurements = as_measurements(m)
     checks: list[Check] = []
 
     def add(id_: str, ok: bool, detail: str, penalty: float = 0.0, gate: bool = False) -> None:
@@ -81,7 +99,7 @@ def technical_review(entry: Entry, m: Measurement | None, limits: Limits) -> Tec
 
     text = entry.meta.text
     has_text = bool(text.strip())
-    has_media = entry.media_path is not None
+    has_media = bool(entry.media)
     add(
         "content",
         has_text or has_media,
@@ -103,96 +121,118 @@ def technical_review(entry: Entry, m: Measurement | None, limits: Limits) -> Tec
     add("hashtags", hashtags <= limits.max_hashtags, f"{hashtags} hashtags (limit {limits.max_hashtags})", penalty=5)
     links = count_links(text)
     add("links", links <= limits.max_links, f"{links} links (limit {limits.max_links})", penalty=5)
-    alt_len = len(entry.meta.alt_text)
-    add(
-        "alt_text_length",
-        alt_len <= limits.alt_text_max_chars,
-        f"alt text {alt_len} chars (limit {limits.alt_text_max_chars})",
-        penalty=3,
-    )
-
     if has_media:
-        assert m is not None
-        add("decodes", m.ok, m.error or f"{m.kind} {m.codec} {m.width}x{m.height}", gate=True)
-        if not m.ok:
-            return TechnicalReview(0.0, False, checks)
         add(
-            "alt_text",
-            bool(entry.meta.alt_text.strip()),
-            "alt text present" if entry.meta.alt_text.strip() else "media without alt text",
-            penalty=5,
-        )
-        small = min(m.width, m.height) >= limits.min_dimension
-        add("dimensions", small, f"{m.width}x{m.height} (minimum side {limits.min_dimension})", gate=True)
-        aspect_ok = limits.aspect_min <= m.aspect <= limits.aspect_max
-        add(
-            "aspect",
-            aspect_ok,
-            f"aspect {m.aspect:.2f} (X accepts {limits.aspect_min:.2f} to {limits.aspect_max:.2f})",
+            "media_count",
+            len(entry.media) <= limits.max_media_items,
+            f"{len(entry.media)} attachment{'s' if len(entry.media) != 1 else ''} (limit {limits.max_media_items})",
             gate=True,
         )
-        if entry.media_kind == "video":
-            add(
-                "video_duration_max",
-                m.duration <= limits.video_max_seconds,
-                f"{m.duration:.1f} s (X limit {limits.video_max_seconds:.0f} s)",
-                gate=True,
-            )
-            add(
-                "video_duration_min",
-                m.duration >= limits.video_min_seconds,
-                f"{m.duration:.2f} s (minimum {limits.video_min_seconds} s)",
-                gate=True,
-            )
-            add(
-                "video_size",
-                m.size_bytes <= limits.video_max_bytes,
-                f"{m.size_bytes / 1048576:.1f} MiB (limit {limits.video_max_bytes / 1048576:.0f} MiB)",
-                gate=True,
-            )
-            add(
-                "video_resolution",
-                m.height >= limits.video_min_height or m.width >= limits.video_min_height,
-                f"{m.width}x{m.height} (minimum {limits.video_min_height} on the short side for landscape)",
-                penalty=10,
-            )
-            frozen_body = max(0.0, m.frozen_seconds - min(m.frozen_tail_seconds, 7.0))
-            frozen_fraction = frozen_body / m.duration if m.duration else 0.0
-            add(
-                "video_motion",
-                frozen_fraction <= limits.video_max_frozen_fraction,
-                f"{frozen_body:.1f} s frozen ({frozen_fraction:.0%}; limit {limits.video_max_frozen_fraction:.0%})",
-                penalty=10,
-            )
-            if m.loudness_lufs is not None:
-                in_range = limits.loudness_lufs_min <= m.loudness_lufs <= limits.loudness_lufs_max
-                add(
-                    "video_loudness",
-                    in_range,
-                    f"{m.loudness_lufs:.1f} LUFS "
-                    f"(range {limits.loudness_lufs_min:.0f} to {limits.loudness_lufs_max:.0f})",
-                    penalty=5,
-                )
-        elif entry.media_kind == "gif":
-            add(
-                "gif_size",
-                m.size_bytes <= limits.gif_max_bytes,
-                f"{m.size_bytes / 1048576:.1f} MiB (X limit {limits.gif_max_bytes / 1048576:.0f} MiB)",
-                gate=True,
-            )
-        else:
-            add(
-                "image_size",
-                m.size_bytes <= limits.image_max_bytes,
-                f"{m.size_bytes / 1048576:.2f} MiB (X limit {limits.image_max_bytes / 1048576:.0f} MiB)",
-                gate=True,
-            )
+
+    item_penalties: list[float] = []
+    for index, item in enumerate(entry.media):
+        measurement = measurements[index] if index < len(measurements) else None
+        item_checks = _media_checks(item, item_label(item, index, len(entry.media)), measurement, limits)
+        checks.extend(item_checks)
+        item_penalties.append(sum(c.penalty for c in item_checks))
+
     json_problems = [p for p in entry.problems if p.startswith(("entry.json", "no entry.json", "media ", "legacy"))]
     add("entry_json", not json_problems, "; ".join(json_problems) or "entry.json valid", penalty=5)
 
     eligible = all(c.ok for c in checks if c.gate)
-    score = max(0.0, 100.0 - sum(c.penalty for c in checks)) if eligible else 0.0
-    return TechnicalReview(score, eligible, checks)
+    if not eligible:
+        return TechnicalReview(0.0, False, checks)
+    common = sum(c.penalty for c in checks) - sum(item_penalties)
+    worst_item = max(item_penalties, default=0.0)
+    return TechnicalReview(max(0.0, 100.0 - common - worst_item), True, checks)
+
+
+def _media_checks(item: MediaItem, label: str, m: Measurement | None, limits: Limits) -> list[Check]:
+    checks: list[Check] = []
+    prefix = f"{label}: " if label else ""
+
+    def add(id_: str, ok: bool, detail: str, penalty: float = 0.0, gate: bool = False) -> None:
+        checks.append(Check(id_, ok, prefix + detail, penalty if not ok else 0.0, gate))
+
+    if m is None:
+        add("decodes", False, "not measured", gate=True)
+        return checks
+    add("decodes", m.ok, m.error or f"{m.kind} {m.codec} {m.width}x{m.height}", gate=True)
+    if not m.ok:
+        return checks
+    alt_text = item.alt_text.strip()
+    add("alt_text", bool(alt_text), "alt text present" if alt_text else "media without alt text", penalty=5)
+    add(
+        "alt_text_length",
+        len(item.alt_text) <= limits.alt_text_max_chars,
+        f"alt text {len(item.alt_text)} chars (limit {limits.alt_text_max_chars})",
+        penalty=3,
+    )
+    small = min(m.width, m.height) >= limits.min_dimension
+    add("dimensions", small, f"{m.width}x{m.height} (minimum side {limits.min_dimension})", gate=True)
+    aspect_ok = limits.aspect_min <= m.aspect <= limits.aspect_max
+    add(
+        "aspect",
+        aspect_ok,
+        f"aspect {m.aspect:.2f} (X accepts {limits.aspect_min:.2f} to {limits.aspect_max:.2f})",
+        gate=True,
+    )
+    if item.kind == "video":
+        add(
+            "video_duration_max",
+            m.duration <= limits.video_max_seconds,
+            f"{m.duration:.1f} s (X limit {limits.video_max_seconds:.0f} s)",
+            gate=True,
+        )
+        add(
+            "video_duration_min",
+            m.duration >= limits.video_min_seconds,
+            f"{m.duration:.2f} s (minimum {limits.video_min_seconds} s)",
+            gate=True,
+        )
+        add(
+            "video_size",
+            m.size_bytes <= limits.video_max_bytes,
+            f"{m.size_bytes / 1048576:.1f} MiB (limit {limits.video_max_bytes / 1048576:.0f} MiB)",
+            gate=True,
+        )
+        add(
+            "video_resolution",
+            m.height >= limits.video_min_height or m.width >= limits.video_min_height,
+            f"{m.width}x{m.height} (minimum {limits.video_min_height} on the short side for landscape)",
+            penalty=10,
+        )
+        frozen_body = max(0.0, m.frozen_seconds - min(m.frozen_tail_seconds, 7.0))
+        frozen_fraction = frozen_body / m.duration if m.duration else 0.0
+        add(
+            "video_motion",
+            frozen_fraction <= limits.video_max_frozen_fraction,
+            f"{frozen_body:.1f} s frozen ({frozen_fraction:.0%}; limit {limits.video_max_frozen_fraction:.0%})",
+            penalty=10,
+        )
+        if m.loudness_lufs is not None:
+            in_range = limits.loudness_lufs_min <= m.loudness_lufs <= limits.loudness_lufs_max
+            add(
+                "video_loudness",
+                in_range,
+                f"{m.loudness_lufs:.1f} LUFS (range {limits.loudness_lufs_min:.0f} to {limits.loudness_lufs_max:.0f})",
+                penalty=5,
+            )
+    elif item.kind == "gif":
+        add(
+            "gif_size",
+            m.size_bytes <= limits.gif_max_bytes,
+            f"{m.size_bytes / 1048576:.1f} MiB (X limit {limits.gif_max_bytes / 1048576:.0f} MiB)",
+            gate=True,
+        )
+    else:
+        add(
+            "image_size",
+            m.size_bytes <= limits.image_max_bytes,
+            f"{m.size_bytes / 1048576:.2f} MiB (X limit {limits.image_max_bytes / 1048576:.0f} MiB)",
+            gate=True,
+        )
+    return checks
 
 
 @dataclass
@@ -264,7 +304,7 @@ class ModelClient:
             "max_tokens": self.cfg.max_tokens,
             "temperature": 0.2,
         }
-        headers = {"Content-Type": "application/json", "User-Agent": "coworld-marketing/0.2"}
+        headers = {"Content-Type": "application/json", "User-Agent": "coworld-marketing/0.3"}
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"
         if slot is not None and self.source == "sidecar":
@@ -281,8 +321,9 @@ class ModelClient:
         return str(content)
 
 
-def _data_uri(path: Path) -> str:
-    return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode()
+def _data_uri(image: Path | bytes) -> str:
+    data = image if isinstance(image, bytes) else image.read_bytes()
+    return "data:image/jpeg;base64," + base64.b64encode(data).decode()
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -305,30 +346,52 @@ def _clamp_score(value: Any) -> int:
 
 @dataclass
 class JudgeImagery:
-    still: Path | None = None  # the image, or the video's poster frame
+    """What the craft panel sees. Pictures come as `stills`, one JPEG per attachment in order; a video comes as its
+    contact sheet and final frame. `still` remains as the single-picture fallback for older callers."""
+
+    stills: list[bytes] = field(default_factory=list)  # one rendering per image or gif, in entry order
+    still: Path | None = None  # the image, or the video's poster frame (fallback when stills is empty)
     sheet: Path | None = None  # contact sheet for video
     end: Path | None = None  # final frame for video
 
 
 def build_messages(
-    entry: Entry, m: Measurement | None, imagery: JudgeImagery, brief: str, account: str
+    entry: Entry,
+    m: Sequence[Measurement] | Measurement | None,
+    imagery: JudgeImagery,
+    brief: str,
+    account: str,
 ) -> list[dict[str, Any]]:
     meta = entry.meta
+    measurements = as_measurements(m)
+    count = len(entry.media)
+    if not entry.media:
+        media_line = "Media: none (text-only post)"
+    elif entry.media_kind == "image":
+        media_line = f"Media: {count} image{'s' if count != 1 else ''}"
+    else:
+        media_line = f"Media: {entry.media_kind}"
     facts = [
         f"Brief: {brief}",
         f"Account: @{account}",
         f"Post text ({weighted_length(meta.text)} of 280 weighted characters):",
         meta.text.strip() or "(no text; media only)",
         "",
-        f"Media: {entry.media_kind if entry.media_path else 'none (text-only post)'}",
+        media_line,
     ]
-    if m is not None and m.ok:
-        if entry.media_kind == "video":
-            facts.append(f"Video: {m.duration:.0f} s, {m.width}x{m.height}, audio: {'yes' if m.has_audio else 'no'}")
-        else:
-            facts.append(f"Picture: {m.width}x{m.height}")
+    for index, item in enumerate(entry.media):
+        measurement = measurements[index] if index < len(measurements) else None
+        label = item_label(item, index, count) or item.kind.capitalize()
+        if measurement is not None and measurement.ok:
+            if item.kind == "video":
+                facts.append(
+                    f"Video: {measurement.duration:.0f} s, {measurement.width}x{measurement.height}, "
+                    f"audio: {'yes' if measurement.has_audio else 'no'}"
+                )
+            else:
+                facts.append(f"{label}: {measurement.width}x{measurement.height}")
+        facts.append(f"Alt text{'' if count < 2 else f' for {label}'}: {item.alt_text.strip() or '(none)'}")
     facts += [
-        f"Alt text: {meta.alt_text.strip() or '(none)'}",
         f"Entrant's thesis: {meta.thesis.strip() or '(none)'}",
         f"Entrant's notes: {meta.notes.strip() or '(none)'}",
     ]
@@ -341,6 +404,13 @@ def build_messages(
         if imagery.end is not None and imagery.end.exists():
             content.append({"type": "text", "text": "The final frame:"})
             content.append({"type": "image_url", "image_url": {"url": _data_uri(imagery.end)}})
+    elif imagery.stills:
+        total = len(imagery.stills)
+        for index, still in enumerate(imagery.stills):
+            alt = entry.media[index].alt_text.strip() if index < len(entry.media) else ""
+            caption = f"Image {index + 1} of {total}" + (f". Alt text: {alt}" if alt else "")
+            content.append({"type": "text", "text": caption})
+            content.append({"type": "image_url", "image_url": {"url": _data_uri(still)}})
     elif imagery.still is not None and imagery.still.exists():
         content.append({"type": "text", "text": "The attached picture:"})
         content.append({"type": "image_url", "image_url": {"url": _data_uri(imagery.still)}})
@@ -351,7 +421,7 @@ def build_messages(
 def craft_review(
     client: ModelClient,
     entry: Entry,
-    m: Measurement | None,
+    m: Sequence[Measurement] | Measurement | None,
     imagery: JudgeImagery,
     brief: str,
     account: str,

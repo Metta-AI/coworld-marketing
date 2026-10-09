@@ -1,6 +1,6 @@
 """Pre-flight for entrants: validate a post package the way the game will, and print the technical report.
 
-marketing-check ./my-post            # a directory with entry.json and optional media
+marketing-check ./my-post            # a directory with entry.json and up to four images, or one video
 marketing-check ./post.txt           # bare text
 marketing-check ./clip.mp4           # bare media
 marketing-check --pack ./my-post out.zip   # also write the zip the platform would stage
@@ -47,8 +47,8 @@ def main(argv: list[str] | None = None) -> int:
     limits = Limits()
     workdir = Path(tempfile.mkdtemp(prefix="mkt-check-work-"))
     entry = load_entry(source, workdir, limits, default_title=args.path.name)
-    measurement = measure(entry.media_path, entry.media_kind) if entry.media_path else None
-    review = technical_review(entry, measurement, limits)
+    measurements = [measure(item.path, item.kind) for item in entry.media]
+    review = technical_review(entry, measurements, limits)
 
     report = {
         "kind": entry.kind,
@@ -56,8 +56,12 @@ def main(argv: list[str] | None = None) -> int:
         "text": entry.meta.text,
         "weighted_length": weighted_length(entry.meta.text),
         "media_kind": entry.media_kind,
+        "media": [
+            {"path": item.display_name, "kind": item.kind, "alt_text": item.alt_text, "measurement": m.to_dict()}
+            for item, m in zip(entry.media, measurements, strict=True)
+        ],
         "problems": entry.problems,
-        "measurement": measurement.to_dict() if measurement else None,
+        "measurement": measurements[0].to_dict() if measurements else None,
         "technical": review.to_dict(),
     }
     if args.json:
@@ -70,10 +74,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  text ({weighted_length(entry.meta.text)}/280 weighted):")
             for line in entry.meta.text.splitlines():
                 print(f"    | {line}")
-        if measurement:
-            m = measurement
+        for item, m in zip(entry.media, measurements, strict=True):
             extra = f"  {m.duration:.1f} s  audio={'yes' if m.has_audio else 'no'}" if m.kind == "video" else ""
-            print(f"  {m.kind} {m.width}x{m.height}{extra}  {m.size_bytes / 1048576:.2f} MiB")
+            print(f"  {item.display_name}: {m.kind} {m.width}x{m.height}{extra}  {m.size_bytes / 1048576:.2f} MiB")
         print(f"  technical score {review.score:.0f}/100  eligible={review.eligible}")
         for check in review.checks:
             mark = "ok " if check.ok else ("GATE" if check.gate else f"-{check.penalty:.0f}")

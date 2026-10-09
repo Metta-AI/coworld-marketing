@@ -16,14 +16,19 @@
   .score { font:700 44px/1 Merriweather, Georgia, serif; font-variant-numeric:tabular-nums; }
   .ok { color:var(--sage);} .bad { color:var(--terracotta);} .muted{color:var(--fg-muted);}
   ul { padding-left:18px; } li { margin:4px 0; }
-  video { width:100%; max-height:420px; background:#111; border-radius:3px; }
+  video, .pictures img { width:100%; max-height:420px; background:#111; border-radius:3px; display:block; object-fit:contain; }
+  .pictures { display:grid; gap:4px; }
+  .pictures.n2, .pictures.n3, .pictures.n4 { grid-template-columns:1fr 1fr; }
+  .pictures.n2 img, .pictures.n3 img, .pictures.n4 img { aspect-ratio:1; object-fit:cover; max-height:none; }
+  .pictures.n3 img:first-child { grid-row:span 2; aspect-ratio:auto; }
+  .alt { color:var(--fg-muted); font-size:12px; font-style:italic; margin-top:4px; }
   .mono { font-family: ui-monospace, Menlo, monospace; font-size:13px; font-variant-numeric:tabular-nums; }
   p.notes { border-left:3px solid var(--border-strong); padding:2px 12px; margin:8px 0; }
 </style>
 </head>
 <body>
 <main>
-  <div class="eyebrow">Softmax Video Marketing</div>
+  <div class="eyebrow">Softmax Marketing</div>
   <h1 id="title">Your seat</h1>
   <div class="status" id="status">Connecting…</div>
   <div id="video"></div>
@@ -51,8 +56,15 @@
       $('score').textContent = Number(o.score).toFixed(1);
       $('score').className = 'score ' + (o.eligible ? 'ok' : 'bad');
     }
-    if (o.poster && !$('video').firstChild) {
-      $('video').innerHTML = `<video controls preload="metadata" poster="data:image/jpeg;base64,${o.poster}" src="/media/${o.slot}.mp4"></video>`;
+    const items = Array.isArray(o.media) ? o.media : [];
+    if (items.length && !$('video').firstChild) {
+      if (items[0].kind === 'video') {
+        const poster = items[0].poster || o.poster;
+        $('video').innerHTML = `<video controls preload="metadata"${poster ? ` poster="data:image/jpeg;base64,${poster}"` : ''} src="/media/${o.slot}/0"></video>`;
+      } else {
+        $('video').innerHTML = `<div class="pictures n${items.length}">${items.map((it, i) => `<img alt="${esc(it.alt_text || `picture ${i + 1}`)}" src="/media/${o.slot}/${i}">`).join('')}</div>` +
+          items.filter(it => it.alt_text).map(it => `<div class="alt">Alt ${items.length > 1 ? it.index + 1 + ': ' : ''}${esc(it.alt_text)}</div>`).join('');
+      }
     }
     if (o.technical) {
       $('checks').innerHTML = o.technical.checks.map(c => `<li class="${c.ok ? '' : 'bad'}"><span class="mono">${esc(c.id)}</span> — ${esc(c.detail)}${c.ok ? '' : (c.gate ? ' (gate)' : ` (−${c.penalty})`)}</li>`).join('');
@@ -60,7 +72,7 @@
     if (o.craft) {
       const s = o.craft.scores;
       $('craft').className = '';
-      $('craft').innerHTML = `<div class="mono">legible ${s.legible} · story ${s.story_not_statement} · motion ${s.motion} · voice ${s.voice} · craft ${s.craft} · postable ${s.postable} → ${o.craft.score}/100</div>` +
+      $('craft').innerHTML = `<div class="mono">hook ${s.hook} · specific ${s.specific} · voice ${s.voice} · legible ${s.legible} · craft ${s.craft} · repostable ${s.repostable} → ${o.craft.score}/100</div>` +
         `<p class="notes">${esc(o.craft.notes)}</p>` + (o.craft.cringe_flags.length ? `<div class="bad">Flags: ${esc(o.craft.cringe_flags.join('; '))}</div>` : '') +
         `<div><em>${esc(o.craft.verdict)}</em></div>`;
     } else if (o.craft_unavailable) {

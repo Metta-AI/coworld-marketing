@@ -35,6 +35,9 @@
   .text:empty::before { content:"(no post text)"; color:var(--fg-muted); font-style:italic; }
   .media { margin-top:12px; border-radius:6px; overflow:hidden; background:#0e0e0e; }
   .media video, .media img { width:100%; max-height:62vh; display:block; object-fit:contain; background:#0e0e0e; }
+  .media.grid { display:grid; gap:3px; grid-template-columns:1fr 1fr; }
+  .media.grid img { width:100%; height:100%; max-height:none; aspect-ratio:1; object-fit:cover; }
+  .media.grid.n3 img:first-child { grid-row:span 2; aspect-ratio:auto; }
   .alt { color:var(--fg-muted); font-size:12px; margin-top:6px; font-style:italic; }
   .engage { display:flex; flex-wrap:wrap; gap:4px 18px; margin-top:12px; padding-top:10px; border-top:1px solid var(--border-subtle); color:var(--fg-muted); font-size:13px; font-variant-numeric:tabular-nums; }
   .engage b { color:var(--fg); font-weight:600; }
@@ -116,7 +119,7 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const num = (n) => Number(n || 0).toLocaleString('en-US');
-  let mediaSrc = (slot) => new URL(`../media/${slot}`, location.href).toString();
+  let mediaSrc = (slot, index) => new URL(`../media/${slot}/${index || 0}`, location.href).toString();
   const blobUrls = {};
   let state = { phase: 'waiting', done: false, brief: '', account: 'softmaxresearch', feed: null, entries: [], results: null, mode: 'live', threshold: 70, weight: 0.5 };
   let index = 0;
@@ -169,24 +172,44 @@
     $('headline').textContent = state.done && r && r.pick != null ? 'Next to post' : 'Jury';
   }
 
-  function slideMediaSrc(e) { return blobUrls[e.slot] || (state.mode === 'replay' ? null : (e.media_kind !== 'none' ? mediaSrc(e.slot) : null)); }
+  // Attachments: a list since replay version 3; older entries carried one item in top-level fields.
+  function mediaItems(e) {
+    if (Array.isArray(e.media)) return e.media;
+    if (e.media_kind && e.media_kind !== 'none') return [{ index: 0, kind: e.media_kind, alt_text: e.alt_text || '', poster: e.poster || '' }];
+    return [];
+  }
+  function slideMediaSrc(e, i) { return blobUrls[`${e.slot}/${i}`] || (state.mode === 'replay' ? null : mediaSrc(e.slot, i)); }
 
   function mediaBlock(e) {
-    const src = slideMediaSrc(e);
-    const poster = e.poster ? `data:image/jpeg;base64,${e.poster}` : '';
-    if (e.media_kind === 'video') {
+    const items = mediaItems(e);
+    if (!items.length) return '';
+    const first = items[0];
+    const posterOf = (it, i) => (it.poster || (i === 0 ? e.poster : '')) ? `data:image/jpeg;base64,${it.poster || e.poster}` : '';
+    if (first.kind === 'video') {
+      const src = slideMediaSrc(e, 0), poster = posterOf(first, 0);
       if (!src && !poster) return '';
       return `<div class="media"><video id="video" controls playsinline muted autoplay loop preload="metadata"${poster ? ` poster="${poster}"` : ''}${src ? ` src="${src}"` : ''}></video></div>`;
     }
-    if (e.media_kind === 'image' || e.media_kind === 'gif') {
-      const url = src || poster;
-      return url ? `<div class="media"><img alt="${esc(e.alt_text || 'attached picture')}" src="${url}"></div>` : '';
-    }
-    return '';
+    const imgs = items.map((it, i) => {
+      const url = slideMediaSrc(e, i) || posterOf(it, i);
+      return url ? `<img alt="${esc(it.alt_text || `picture ${i + 1} of ${items.length}`)}" src="${url}">` : '';
+    }).filter(Boolean);
+    if (!imgs.length) return '';
+    if (imgs.length === 1) return `<div class="media">${imgs[0]}</div>`;
+    return `<div class="media grid n${imgs.length}">${imgs.join('')}</div>`;
+  }
+
+  function altBlock(e) {
+    const items = mediaItems(e).filter(it => it.alt_text);
+    if (!items.length) return '';
+    if (mediaItems(e).length === 1) return `<div class="alt">Alt: ${esc(items[0].alt_text)}</div>`;
+    return `<div class="alt">${items.map(it => `Alt ${it.index + 1}: ${esc(it.alt_text)}`).join(' · ')}</div>`;
   }
 
   function engagementBlock(e) {
-    if (!e.posted || !e.post) return '';
+    if (!e.posted || !e.post) {
+      return e.room_ships ? `<div class="engage"><span><b>${num(e.room_ships)}</b> ${e.room_ships === 1 ? 'ship' : 'ships'} in the room</span></div>` : '';
+    }
     const m = e.post.metrics || {};
     const link = e.post.url ? `<a href="${esc(e.post.url)}" target="_blank" rel="noopener">on X</a>` : '';
     return `<div class="engage"><span><b>${num(m.impressions)}</b> impressions</span><span><b>${num(m.likes)}</b> likes</span><span><b>${num(m.reposts)}</b> reposts</span><span><b>${num(m.replies)}</b> replies</span>${m.quotes != null ? `<span><b>${num(m.quotes)}</b> quotes</span>` : ''}<span>${esc((e.post.posted_at || '').slice(0, 10))} ${link}</span></div>`;
@@ -212,7 +235,7 @@
     let sub = '';
     if (state.done && t) sub = `technical ${Number(t.score).toFixed(0)}` + (c ? ` · craft ${Number(c.score).toFixed(0)} (hook ${c.scores.hook} · specific ${c.scores.specific} · voice ${c.scores.voice} · legible ${c.scores.legible} · craft ${c.scores.craft} · repostable ${c.scores.repostable})${c.cached ? ' · cached' : ''}` : (e.craft_unavailable ? ' · craft panel unavailable' : ''));
     const w = Math.round(state.weight * 100);
-    const halves = state.done ? `<div class="halves"><div>judge · ${100 - w}%<b>${Number(e.judge).toFixed(1)}</b></div><div>engagement · ${w}%<b>${e.posted ? Number(e.engagement).toFixed(1) : '—'}</b></div></div>` : '';
+    const halves = state.done ? `<div class="halves"><div>judge · ${100 - w}%<b>${Number(e.judge).toFixed(1)}</b></div><div>engagement · ${w}%${e.posted ? '' : ' · room'}<b>${e.posted || e.room_ships ? Number(e.engagement).toFixed(1) : '—'}</b></div></div>` : '';
     const scoreBlock = state.done ? `<div><div class="score">${Number(e.score).toFixed(1)}<small>/ 100</small></div>${halves}<div class="sub">${esc(sub)}</div></div>` : `<div class="sub">${esc(e.status)}</div>`;
     const techVerdict = state.done && r ? String(r.verdicts[e.slot] || '') : '';
     const judge = c ? `<p class="notes">${esc(c.notes)}</p>${c.cringe_flags && c.cringe_flags.length ? `<div class="flags">Flags: ${esc(c.cringe_flags.join('; '))}</div>` : ''}<p class="verdict">${esc(c.verdict)}</p>` :
@@ -229,7 +252,7 @@
           <div class="who"><div class="avatar">S</div><div><div class="name">Softmax</div><div class="handle">@${esc(state.account)}</div></div></div>
           <p class="text">${esc(e.text || '')}</p>
           ${mediaBlock(e)}
-          ${e.alt_text && e.media_kind !== 'none' ? `<div class="alt">Alt: ${esc(e.alt_text)}</div>` : ''}
+          ${altBlock(e)}
           ${engagementBlock(e)}
         </article>
         <button type="button" class="nav prev" aria-label="Previous post" ${slides.length < 2 ? 'disabled' : ''}>‹</button>
@@ -277,17 +300,27 @@
     state.entries = replay.entries || [];
     state.results = replay.results || null;
     const media = replay.media || {};
-    for (const [slot, b64] of Object.entries(media)) {
-      try {
-        const entry = state.entries.find(x => x.slot === Number(slot));
-        const bin = atob(b64); const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        blobUrls[Number(slot)] = URL.createObjectURL(new Blob([bytes], { type: (entry && entry.media_mime) || 'application/octet-stream' }));
-      } catch (e) { console.warn('media decode failed for slot', slot, e); }
+    for (const [slot, value] of Object.entries(media)) {
+      const list = Array.isArray(value) ? value : [value];  // version 2 replays: one string per seat
+      const entry = state.entries.find(x => x.slot === Number(slot));
+      const items = entry ? mediaItems(entry) : [];
+      list.forEach((b64, i) => {
+        try {
+          const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+          for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+          const type = (items[i] && items[i].mime) || (entry && entry.media_mime) || 'application/octet-stream';
+          blobUrls[`${slot}/${i}`] = URL.createObjectURL(new Blob([bytes], { type }));
+        } catch (e) { console.warn('media decode failed for slot', slot, 'index', i, e); }
+      });
     }
+    // Filler seats repeat a real entry's bytes: share its blobs by content hash.
     const byHash = {};
-    for (const e of state.entries) if (blobUrls[e.slot] && e.content_hash) byHash[e.content_hash] = blobUrls[e.slot];
-    for (const e of state.entries) if (!blobUrls[e.slot] && e.content_hash && byHash[e.content_hash]) blobUrls[e.slot] = byHash[e.content_hash];
+    for (const e of state.entries) if (e.content_hash && blobUrls[`${e.slot}/0`]) byHash[e.content_hash] = e.slot;
+    for (const e of state.entries) {
+      const src = e.content_hash != null ? byHash[e.content_hash] : undefined;
+      if (src == null || src === e.slot || blobUrls[`${e.slot}/0`]) continue;
+      mediaItems(e).forEach((_, i) => { if (blobUrls[`${src}/${i}`]) blobUrls[`${e.slot}/${i}`] = blobUrls[`${src}/${i}`]; });
+    }
     index = 0;
     render();
   }

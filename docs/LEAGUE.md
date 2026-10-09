@@ -35,11 +35,12 @@ What the settings mean:
 
 The game cannot reach X from inside a hosted episode. The marketing agent (`marketing-agent`, in `marketing/agent.py`) runs outside the platform and:
 
-1. reads completed rounds and remembers every graded post (content hash, text, judgement);
+1. reads completed rounds and remembers every graded post (content hash, text, judgement, policy version);
 2. reads @softmaxresearch's recent posts on X and matches them to graded entries by text;
 3. pulls public metrics for the matched posts;
-4. writes the engagement feed (`softmax-engagement-feed/1`: posts by content hash with metrics, plus the judge cache) and stores it as the Coworld secret `engagement_feed`, which hosted episodes receive as `ENGAGEMENT_FEED_URI`;
-5. calls `POST /v2/leagues/{id}/grade` for the published posts so their engagement half is re-scored.
+4. reads the room: the league's submissions, the forum post each one links to in its `notes`, and that post's score (see below);
+5. writes the engagement feed (`softmax-engagement-feed/1`: posts by content hash with metrics, the `room` map of ships by content hash, plus the judge cache) and stores it as the Coworld secret `engagement_feed`, which hosted episodes receive as `ENGAGEMENT_FEED_URI`;
+6. calls `POST /v2/leagues/{id}/grade` for the published posts, and for the entries whose ships moved since the last feed, so their engagement half is re-scored.
 
 ```bash
 export X_BEARER_TOKEN=...            # or X_CONSUMER_KEY + X_CONSUMER_SECRET
@@ -47,6 +48,18 @@ uv run marketing-agent run --league league_... --coworld marketing --every 3600
 ```
 
 It keeps its state in `~/.config/softmax-marketing/agent-state.json`. `marketing-agent once ...` runs one step; `show` prints the state. Run it from a team machine or a scheduled job; it needs a Softmax user credential (the Coworld owner, or a team member with `--elevated`) and the X app's bearer token. It reads X and never posts.
+
+## Room votes: the notes convention
+
+Before a post is live on X, its engagement half comes from the room: the forum post on the platform where the entry was pitched and people shipped or sank it. The link between an entry and its forum post is the league submission's `notes` field, which holds a JSON object:
+
+```json
+{"post_id": "post_01HZX..."}
+```
+
+`notes` is the submission's own note field (`LeagueSubmissionPublic.notes`), set on the submission after it is created; the `coworld submit` command and the public create request do not take a note today, so the link is made in Observatory or by the team. The agent reads `GET /v2/league-submissions?league_id=...` (following the `X-Next-Cursor` header), parses each submission's `notes`, fetches `GET /v2/posts/{post_id}` and takes `max(score, 0)` (the post's net vote score) as the ships. It maps the submission's `policy_version.id` to the content hash it saw graded in that policy version's episode; a policy version that has not been graded yet is skipped (its first grade is at 0 ships regardless, and the next cycle picks it up). Notes that are not JSON, or carry no `post_id`, mean no room score. Nothing else in `notes` is read.
+
+The feed's `room` map is `{"sha256:<content hash>": {"ships": 3, "updated_at": "..."}}`. The game scores it as `min(100, engagement.room_points_per_ship * ships)`, 10 points per ship by default, and the agent remembers the last ships it published per policy version so a change earns a re-grade. Once the post goes out on X, its metrics replace the room.
 
 ## Posting
 
