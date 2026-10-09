@@ -7,7 +7,7 @@ import zlib
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 HTTP_USER_AGENT = "coworld-marketing/0.2"
 
@@ -21,11 +21,21 @@ def uri_to_path(uri: str) -> Path | None:
     return None
 
 
+def _opener():
+    """Hosted episode pods have no public egress or DNS; declared external reads go through the pod-local
+    relay the platform names in COWORLD_EGRESS_RELAY_URL (an explicit HTTP CONNECT proxy). Locally it is unset
+    and reads go direct."""
+    relay = os.environ.get("COWORLD_EGRESS_RELAY_URL", "").strip()
+    if relay:
+        return build_opener(ProxyHandler({"http": relay, "https": relay}))
+    return build_opener(ProxyHandler({}))
+
+
 def read_data(uri: str) -> bytes:
     parsed = urlparse(uri)
     if parsed.scheme in {"http", "https"}:
         request = Request(uri, headers={"User-Agent": HTTP_USER_AGENT})
-        with urlopen(request, timeout=60) as response:
+        with _opener().open(request, timeout=60) as response:
             return response.read()
     path = uri_to_path(uri)
     if path is None:
@@ -53,7 +63,7 @@ def write_data(
         request = Request(uri, data=payload, method=http_method)
         request.add_header("Content-Type", content_type)
         request.add_header("User-Agent", HTTP_USER_AGENT)
-        with urlopen(request, timeout=300):
+        with _opener().open(request, timeout=300):
             return
     path = uri_to_path(uri)
     if path is None:
