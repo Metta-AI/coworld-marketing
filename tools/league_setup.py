@@ -78,12 +78,15 @@ def main() -> int:
     settings.pop("round_interval_minutes", None)
     status, body = call("POST", f"/leagues/{league}/settings", settings)
     print("settings:", status, str(body)[:300])
-    if status == 422 and "continuous" in str(body):
-        # The platform has not deployed continuous grading leagues yet (metta PR #27120).
-        # Write everything else with the ladder DISABLED so nothing paces whole-roster
-        # rounds on an interval; rerun with --enable once the deploy lands.
-        print("platform does not know ladder.continuous yet: writing the rest with the ladder disabled")
+    if status == 422 and ("continuous" in str(body) or "latest" in str(body)):
+        # The platform has not deployed continuous grading leagues yet (metta PR #27120:
+        # ladder.continuous and standing_aggregation "latest"). Write everything else with
+        # the ladder DISABLED so nothing paces whole-roster rounds on an interval, and an
+        # interim "max" standing; rerun with --enable once the deploy lands.
+        print("platform does not know ladder.continuous / latest yet: writing the rest with the ladder disabled")
         ladder.pop("continuous", None)
+        if ladder["ranking"].get("standing_aggregation") == "latest":
+            ladder["ranking"]["standing_aggregation"] = "max"
         ladder["enabled"] = False
         args.enable = False
         status, body = call("POST", f"/leagues/{league}/settings", settings)
