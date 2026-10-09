@@ -35,6 +35,7 @@ def test_every_player_is_certified_and_exists(template: dict, root: Path) -> Non
     seated = {p["player_id"] for p in template["certification"]["players"]}
     assert ids == seated == {"the-wall", "read-the-room", "plain-post"}
     for player in template["player"]:
+        assert player["name"] and player["type"] == "player"
         assert "image" not in player and (root / player["file"]).is_dir()
         assert (root / player["file"] / "entry.json").exists()
     assert template["game"]["player_runtime"] == "game-hosted"

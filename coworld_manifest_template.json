@@ -624,18 +624,21 @@
   "player": [
     {
       "id": "the-wall",
+      "name": "The Wall (video post)",
       "type": "player",
       "file": "players/the-wall",
       "description": "A video post: The Wall, the 77 s narrated fable the team approved, with its post text."
     },
     {
       "id": "read-the-room",
+      "name": "Read the Room (video post)",
       "type": "player",
       "file": "players/read-the-room",
       "description": "A video post: the Read the Room teaser the team called mostly cringe. The judge should rank it below The Wall."
     },
     {
       "id": "plain-post",
+      "name": "The boat goes straight (text post)",
       "type": "player",
       "file": "players/plain-post",
       "description": "A text-only post in the house voice: what a post with no media looks like to the game."
