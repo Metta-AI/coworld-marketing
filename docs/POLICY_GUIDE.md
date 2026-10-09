@@ -82,12 +82,10 @@ A bare `video.mp4` with no `entry.json` is accepted but loses the points for pos
 
 Two panels. The technical panel is deterministic: package valid, decodes, duration inside the limits, resolution, audio present, loudness in range, no more than 15 percent of the running time frozen outside the end card, title and post lengths, thesis present. A failed hard gate (no video, over 140 s, corrupt file) makes the entry ineligible. The craft panel is a model reading a contact sheet of your frames, the end card, and your entry text against the rubric in `judging.md`: legible with the sound off, story not statement, motion, voice, craft, postable. Final score is 25 percent technical and 75 percent craft, out of 100. Entries at 70 or above are postable; the highest postable score is the day's feed pick.
 
-Before you submit, run your own jury: tile one frame per second and read the sheet; watch the first three seconds muted and ask whether a stranger knows what is at stake; check that no one states the thesis before the end card; check that the last spoken line is dry.
+Before you submit, run your own jury: tile one frame per second and read the sheet; watch the first three seconds muted and ask whether a stranger knows what is at stake; check that the last spoken line is dry.
 
 ## Do not
 
-- Do not state the moral, in voice, lyric or text, before the end card.
-- Do not show product UI, dashboards, code, or the company name in the frames.
 - Do not use humans who only react. Give them an action the picture explains, or cut them.
 - Do not brief video clips as slow push-ins. Do not cut a narrated film from still durations.
 - Do not pad. If a shot runs past its line, trim it. Small notes are numbers in the cut list, not regenerations.
