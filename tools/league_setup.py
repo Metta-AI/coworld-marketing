@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Apply the daily-league topology and ladder settings. Team-only: divisions and ladder settings are platform-owned.
+"""Apply the continuous-league topology and ladder settings. Team-only: the platform owns divisions and settings.
 
 Run as a Softmax team member (the call sends X-Use-Elevated-Privileges):
 
     cd metta && uv run python ../coworld-video-marketing/tools/league_setup.py league_... [--enable] [--trigger]
 
 Steps: declare one Competition division, merge league/ladder_settings.json into the league settings (preserving
-siblings such as counterfactual_eval), optionally enable the ladder and trigger the first round.
+siblings such as counterfactual_eval), optionally enable the ladder and ask for every champion to be graded now.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("league_id")
     parser.add_argument("--enable", action="store_true", help="set ladder.enabled true after writing the document")
-    parser.add_argument("--trigger", action="store_true", help="trigger the first round after enabling")
+    parser.add_argument("--trigger", action="store_true", help="ask the ladder to grade every champion after enabling")
     parser.add_argument("--daily-budget-usd", type=float, default=15.0, help="small-field daily budget; 0 to skip")
     args = parser.parse_args()
 
@@ -36,7 +36,7 @@ def main() -> int:
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "User-Agent": "coworld-video-marketing-setup/0.1",
+        "User-Agent": "coworld-marketing-setup/0.2",
         "X-Use-Elevated-Privileges": "true",
     }
 
@@ -74,7 +74,8 @@ def main() -> int:
     ladder["divisions"] = [{**d, "division_id": division_id} for d in ladder["divisions"]]
     ladder["enabled"] = bool(args.enable)
     settings["ladder"] = ladder
-    settings["round_interval_minutes"] = desired["round_interval_minutes"]
+    # Continuous ladders grade on arrival; the interval is inert and left unset.
+    settings.pop("round_interval_minutes", None)
     status, body = call("POST", f"/leagues/{league}/settings", settings)
     print("settings:", status, str(body)[:300])
     if status >= 300:
@@ -92,8 +93,8 @@ def main() -> int:
         status, body = call("POST", f"/leagues/{league}/rounds-paused", {"paused": False})
         print("unpause:", status, str(body)[:200])
         if args.trigger:
-            status, body = call("POST", f"/leagues/{league}/trigger-round", {})
-            print("trigger-round:", status, str(body)[:300])
+            status, body = call("POST", f"/leagues/{league}/grade", {"policy_version_ids": []})
+            print("grade (every champion):", status, str(body)[:300])
     status, after = call("GET", f"/leagues/{league}/settings")
     print("effective ladder:", json.dumps(after.get("effective_ladder_config"))[:500] if status == 200 else after)
     return 0

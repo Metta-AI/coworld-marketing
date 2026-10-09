@@ -7,7 +7,7 @@ from pathlib import Path
 
 import jsonschema
 
-from videomarketing.config import GameConfig
+from marketing.config import GameConfig
 
 
 def _with_tokens(config: dict) -> dict:
@@ -24,16 +24,22 @@ def test_variants_and_certification_validate(template: dict) -> None:
     jsonschema.validate(cert, schema)
     GameConfig.model_validate(cert)
     assert len(template["certification"]["players"]) == len(template["certification"]["game_config"]["players"])
+    # The continuous league grades one post per episode; the manifest must accept a single seat.
+    grade = next(v for v in template["variants"] if v["id"] == "grade")
+    assert len(grade["game_config"]["players"]) == 1
+    assert schema["properties"]["tokens"]["minItems"] == 1
 
 
 def test_every_player_is_certified_and_exists(template: dict, root: Path) -> None:
     ids = {p["id"] for p in template["player"]}
     seated = {p["player_id"] for p in template["certification"]["players"]}
-    assert ids == seated
+    assert ids == seated == {"the-wall", "read-the-room", "plain-post"}
     for player in template["player"]:
         assert "image" not in player and (root / player["file"]).is_dir()
-        assert (root / player["file"] / "entry.json").exists() and (root / player["file"] / "video.mp4").exists()
+        assert (root / player["file"] / "entry.json").exists()
     assert template["game"]["player_runtime"] == "game-hosted"
+    assert template["game"]["name"] == "marketing"
+    assert template["game"]["runnable"]["env"]["ENGAGEMENT_FEED_URI"].startswith("secret://coworld/marketing/")
     assert len(template["tags"]) >= 3
     assert "commissioner" not in template
 
@@ -54,8 +60,24 @@ def test_replay_viewer_hook(root: Path, tmp_path: Path) -> None:
 
 
 def test_entry_json_files_parse(root: Path) -> None:
-    from videomarketing.entry import EntryMeta
+    from marketing.entry import EntryMeta, weighted_length
 
-    for player in ("the-wall", "read-the-room"):
+    for player in ("the-wall", "read-the-room", "plain-post"):
         meta = EntryMeta.model_validate(json.loads((root / "players" / player / "entry.json").read_text()))
-        assert len(meta.post) <= 280 and meta.thesis and meta.script
+        assert meta.schema_ == "softmax-post-entry/1"
+        assert weighted_length(meta.text) <= 280 and meta.label
+        if meta.media:
+            assert (root / "players" / player / meta.media).exists()
+
+
+def test_ladder_settings_are_continuous(root: Path) -> None:
+    settings = json.loads((root / "league/ladder_settings.json").read_text())
+    ladder = settings["ladder"]
+    assert ladder["continuous"]["enabled"] is True and ladder["continuous"]["variant_id"] == "grade"
+    assert ladder["ranking"] == {
+        "algorithm": "score",
+        "round_scoring_rule": "mean",
+        "standing_aggregation": "latest",
+        "initial_standing": 0.0,
+    }
+    assert "round_interval_minutes" not in settings

@@ -1,0 +1,11 @@
+{
+  "schema": "softmax-post-entry/1",
+  "text": "We measure alignment the way you would measure a rowing crew: not by asking each rower how aligned they feel, but by whether the boat goes straight.\n\nFive agents, one game, nobody told to cooperate. The first thing they learn is to wait. softmax.com",
+  "media": null,
+  "alt_text": "",
+  "title": "The boat goes straight",
+  "thesis": "Alignment is a property of the group, measured in the group.",
+  "notes": "Text-only baseline in the house voice. Two short paragraphs, one concrete picture, a dry last line, the domain and nothing else.",
+  "credits": "Softmax",
+  "made_with": []
+}

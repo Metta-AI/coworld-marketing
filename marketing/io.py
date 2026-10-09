@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
-HTTP_USER_AGENT = "coworld-video-marketing/0.1"
+HTTP_USER_AGENT = "coworld-marketing/0.2"
 
 
 def uri_to_path(uri: str) -> Path | None:

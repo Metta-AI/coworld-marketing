@@ -1,5 +1,4 @@
 {
-  "round_interval_minutes": 1440,
   "ladder": {
     "enabled": false,
     "scheduler": {
@@ -14,9 +13,15 @@
     "ranking": {
       "algorithm": "score",
       "round_scoring_rule": "mean",
-      "standing_aggregation": "ewma",
-      "half_life_hours": 168,
+      "standing_aggregation": "latest",
       "initial_standing": 0.0
+    },
+    "continuous": {
+      "enabled": true,
+      "variant_id": "grade",
+      "seats_per_episode": 1,
+      "regrade_interval_minutes": null,
+      "max_policies_per_round": 32
     },
     "divisions": [
       {

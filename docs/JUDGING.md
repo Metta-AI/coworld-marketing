@@ -1,58 +1,55 @@
-# How entries are judged
+# How posts are scored
 
-Every seat in an episode is one submitted entry. The game judges each entry with two panels and writes one score per seat to `results.scores` (0 to 100). The platform ladder ranks players on that score.
+Every seat ends with one number from 0 to 100 in `results.scores`. It is two halves:
 
-## Technical panel (deterministic, 25 percent)
+```
+score = (1 - w) * judge + w * engagement        w = engagement.weight, 0.5 by default
+judge = 0.25 * technical + 0.75 * craft          the autograder, 0 to 100
+```
 
-Runs inside the game container with ffprobe and ffmpeg. Starts at 100 and deducts:
+The judge half is decided inside the episode. The engagement half is decided by the audience, after the Softmax team has published the post, and reaches the episode through the engagement feed. An entry that has not been published scores 0 on engagement, so the top of the board is always something that went out, and the judge decides what goes out next.
 
-| Check | Rule | Effect |
+## The technical panel (deterministic)
+
+Gates (a failure makes the entry ineligible and the score 0):
+
+- the package is valid (zip, media file, or UTF-8 text) and has text or media;
+- the text weighs at most 280 characters, counted X's way (URLs 23, wide characters 2);
+- media decodes, has at least 32 px on the short side, and an aspect between 1:3 and 3:1;
+- video is 0.5 to 140 seconds and at most 100 MiB; images at most 5 MiB; GIFs at most 15 MiB.
+
+Deductions from 100: no text with media (10), more than 2 hashtags (5), more than 2 links (5), alt text missing with media (5) or over 1000 characters (3), video under 720 px (10), more than 15 percent of a video frozen (10), video loudness outside -24 to -10 LUFS (5), `entry.json` problems (5).
+
+## The craft panel (a model, against the house rubric)
+
+The craft panel is a model reading the post exactly as it would appear: the text, the picture (or a 12-frame contact sheet and the final frame of a video), the alt text and the entrant's notes, against the rubric in `marketing/rubric.md`. It scores six dimensions from 0 to 10:
+
+| dimension | weight | question |
 | --- | --- | --- |
-| `package` | the player file is a video or a zip with a video | gate |
-| `decodes` | ffprobe finds a video stream with a duration | gate |
-| `duration_max` | at most 140 s | gate |
-| `duration_min` | at least 20 s | -40 |
-| `duration_target` | 45 to 120 s | -10 |
-| `resolution` | height at least 720 | -15 |
-| `audio` | an audio track exists | -20 |
-| `loudness` | integrated loudness -20 to -12 LUFS | -8 |
-| `motion_floor` | at most 15 percent of the running time frozen, after allowing up to 7 s of end card | -20 |
-| `title_length` | title at most 70 characters | -3 |
-| `post_length` | post text at most 280 characters | -5 |
-| `post_present` | post text supplied | -5 |
-| `thesis_present` | thesis supplied | -3 |
-| `entry_json` | entry.json present and valid | -5 |
+| hook | 0.20 | does the first line stop a researcher's scroll? |
+| specific | 0.20 | is there a real, true, concrete idea only Softmax could post? |
+| voice | 0.25 | dry, literate, a little funny; no hype, hashtags, exclamation marks or product copy |
+| legible | 0.10 | does the media read in a feed, muted, at phone size, and show what the text says? |
+| craft | 0.10 | media quality and the text's rhythm and economy |
+| repostable | 0.15 | would the team post it today, as is, and would a serious researcher repost it? |
 
-A failed gate makes the entry ineligible: score 0, not postable, and the craft panel does not run.
+Craft score = 10 × the weighted sum. The model also lists `cringe_flags`, writes 80 words of notes and a one-line verdict. Hosted episodes call the model through the Coworld LLM sidecar (`COWORLD_LLM_ENDPOINT`, model `anthropic/claude-sonnet-4.6` by default) with `X-Coworld-Player-Slot` set to the seat, so spend is charged to the entrant. Locally the game reads `JUDGE_API_KEY` (or `OPENROUTER_API_KEY`), `JUDGE_API_BASE` and `JUDGE_MODEL`.
 
-## Craft panel (model, 75 percent)
+The judgement is cached. The game writes each seat's technical and craft result into `results.judge_records`, the marketing agent copies them into the engagement feed's `judge_cache`, and a later episode that sees the same content hash under the same rubric version and model reuses them instead of calling the model again. Re-grading a published post therefore costs no model calls; only the engagement half moves.
 
-The game builds a contact sheet (12 frames in time order) and the final frame, and sends them with the entry's title, format, post text, thesis and script to a model through the Coworld LLM sidecar (`COWORLD_LLM_ENDPOINT`, attributed to the seat with `X-Coworld-Player-Slot`). Default model `anthropic/claude-sonnet-4.6`, configurable per variant. The system prompt is the rubric shipped in the game image at `videomarketing/rubric.md`; it encodes the Softmax team's taste, what they rejected and what held.
+If the craft panel is unavailable (no endpoint, or the model fails after retries) the entry is judged on the technical panel alone, which caps the judge half at 25 and is reported as `judge_mode: technical-fallback`.
 
-Six dimensions, 0 to 10 each, weighted:
+## The engagement half
 
-| Dimension | Weight | Question |
-| --- | --- | --- |
-| legible | 0.20 | With the sound off, does a stranger know what is happening and what is at stake? |
-| story_not_statement | 0.25 | Does the idea arrive as something that happens to someone, not as a slogan, tour, explainer or moral? |
-| motion | 0.15 | Do things happen in the frames, or is it a slideshow? |
-| voice | 0.20 | Is it Softmax: dry, literate, specific, a little funny? Deduct for hype and anything a researcher would be embarrassed to repost. |
-| craft | 0.10 | Consistency, cuts on phrases or beats, sound under the voice, a clean one-sentence end card, no stray text. |
-| postable | 0.10 | Would the team put it on the company feed today, as is? |
+The feed carries, for each published post, `impressions`, `likes`, `reposts` and `replies` (quotes and bookmarks are shown but not scored). Each metric earns a fraction of its target on a logarithmic curve, so the first hundred impressions matter more than the last thousand:
 
-Craft score = 10 x weighted sum. The model also returns `cringe_flags`, `notes` (specific, under 80 words) and a one-sentence `verdict`, all shown on the jury page and in the seat's private log.
+```
+fraction = min(1, log(1 + value) / log(1 + target))
+engagement = 100 * (0.35 * f(impressions) + 0.35 * f(likes) + 0.20 * f(reposts) + 0.10 * f(replies))
+```
 
-Identical bytes in two seats are judged once and the judgement copied, so filler duplicates cost nothing extra.
+Default targets: 10,000 impressions, 100 likes, 25 reposts, 10 replies. Half a target earns about 0.9; a tenth about 0.65. Targets and weights are game config (`engagement.targets`, `engagement.metric_weights`) and should be retuned as the account grows.
 
-## Final score and the feed pick
+## Postable and the pick
 
-`score = 0.25 x technical + 0.75 x craft`. If the craft panel is unavailable for a seat after retries (rate limit, model denied), that seat is scored on the technical panel alone (`0.25 x technical`) and flagged `craft_unavailable`; if it was unavailable for every seat, `results.judge_mode` is `technical-fallback`.
-
-`postable[i]` is true when the seat is eligible and its score is at least the variant's `postable_threshold` (default 70). `feed_pick` is the slot with the highest postable score, or null when nothing reached the bar. The jury page shows the pick with its post text ready to copy; posting to X is a human step.
-
-## Judge modes
-
-- `panel`: both panels. Used by the league variants.
-- `technical`: technical panel only, no model calls. Used by certification and local smoke runs so they run offline and free.
-
-Local runs with the panel need a model endpoint: set `JUDGE_API_KEY` (or `OPENROUTER_API_KEY`) and optionally `JUDGE_API_BASE` (default `https://openrouter.ai/api/v1`) and `JUDGE_MODEL` (when the local provider names the model differently from the OpenRouter slug) in the game's environment. Hosted runs use the sidecar automatically.
+An entry is `postable` when it is eligible, not yet published, and its judge score is at or above `postable_threshold` (70). The highest judge score among postable entries is `results.pick`: the next post the team should publish. The jury page shows its text and alt text with a copy button. Publishing stays a human act; the agent notices the post on the account afterwards by matching its text.

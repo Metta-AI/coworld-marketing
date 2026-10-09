@@ -3,13 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "coworld-video-marketing"
-version = "0.1.0"
-description = "Softmax Video Marketing: a daily Coworld where players submit a video and a judge scores it against the Softmax bar."
+name = "coworld-marketing"
+version = "0.2.0"
+description = "Softmax Marketing: a continuous Coworld where people and agents submit X posts, an autograder judges them and real engagement decides the rest."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
   "pydantic>=2.10,<3",
   "uvicorn[standard]>=0.34,<1",
   "websockets>=15,<16",
@@ -17,7 +18,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.28,<1",
   "jsonschema>=4.23,<5",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.25,<1",
@@ -25,11 +25,12 @@ dev = [
 ]
 
 [project.scripts]
-svm-game = "videomarketing.server:main"
-svm-check = "videomarketing.check:main"
+marketing-game = "marketing.server:main"
+marketing-check = "marketing.check:main"
+marketing-agent = "marketing.agent:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["videomarketing"]
+packages = ["marketing"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

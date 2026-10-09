@@ -16,6 +16,6 @@ fi
 
 rm -rf "${output_dir}"
 mkdir -p "${output_dir}"
-cp "${repo_dir}/videomarketing/static/jury.html" "${output_dir}/index.html"
+cp "${repo_dir}/marketing/static/jury.html" "${output_dir}/index.html"
 test -s "${output_dir}/index.html"
 echo "replay viewer bundle written to ${output_dir}"

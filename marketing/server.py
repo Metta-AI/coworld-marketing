@@ -1,8 +1,10 @@
-"""Softmax Video Marketing game container.
+"""Softmax Marketing game container.
 
-Game-hosted Coworld: each seat's player file is a video (or a zip with entry.json + video). The game validates,
-measures and judges every entry, publishes the jury to the global viewer, writes per-seat logs and artifacts, then
-the replay (the jury page data) and results.
+Game-hosted Coworld: each seat's player file is an X post (a zip with entry.json and optional media, a bare media
+file, or bare text). The game validates and measures the post, runs the autograder (technical panel + model craft
+panel), reads real engagement for posts that went out on the company account from the engagement feed, blends the
+two halves into the score, publishes the jury to the global viewer, writes per-seat logs and artifacts, then the
+replay (the jury page data) and results.
 """
 
 from __future__ import annotations
@@ -26,23 +28,30 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Response, WebSocket
 from fastapi.responses import HTMLResponse
 
-from videomarketing import __version__
-from videomarketing.config import GameConfig
-from videomarketing.entry import Entry, EntryMeta, load_entry
-from videomarketing.io import artifact_method, decode_replay_bytes, read_data, uri_to_path, write_data
-from videomarketing.judge import (
+from marketing import __version__
+from marketing.config import GameConfig, MediaKind
+from marketing.engagement import Feed, PostRecord, blend, engagement_score, load_feed
+from marketing.entry import Entry, EntryMeta, load_entry, weighted_length
+from marketing.io import artifact_method, decode_replay_bytes, read_data, uri_to_path, write_data
+from marketing.judge import (
+    RUBRIC_VERSION,
     CraftReview,
+    JudgeImagery,
     ModelClient,
     TechnicalReview,
-    combine,
+    cache_record,
     craft_review,
+    from_cache,
+    judge_score,
     technical_review,
 )
-from videomarketing.probe import Measurement, contact_sheet, frame_at, measure
+from marketing.probe import Measurement, contact_sheet, frame_at, measure, still_image
 
-logger = logging.getLogger("videomarketing.game")
+logger = logging.getLogger("marketing.game")
 STATIC_DIR = Path(__file__).parent / "static"
-REPLAY_VERSION = 1
+REPLAY_VERSION = 2
+GAME_NAME = "marketing"
+MEDIA_TYPES = {"video": "video/mp4", "image": "image/jpeg", "gif": "image/gif", "none": "application/octet-stream"}
 
 
 @dataclass
@@ -60,15 +69,27 @@ class Seat:
     technical: TechnicalReview | None = None
     craft: CraftReview | None = None
     craft_unavailable: bool = False
+    judge: float = 0.0
+    engagement: float = 0.0
+    post: PostRecord | None = None
     score: float = 0.0
     poster_b64: str = ""
     sheet_b64: str = ""
     end_b64: str = ""
+    media_mime: str = ""
     log_lines: list[str] = field(default_factory=list)
     workdir: Path | None = None
 
     def log(self, message: str) -> None:
         self.log_lines.append(f"{time.strftime('%H:%M:%S')} {message}")
+
+    @property
+    def media_kind(self) -> MediaKind:
+        return self.entry.media_kind if self.entry else "none"
+
+    @property
+    def eligible(self) -> bool:
+        return bool(self.technical and self.technical.eligible)
 
     def public(self, *, include_notes: bool) -> dict[str, Any]:
         meta = self.entry.meta if self.entry else EntryMeta(title=self.name)
@@ -77,14 +98,16 @@ class Seat:
             "slot": self.slot,
             "name": self.name,
             "status": self.status,
-            "title": meta.title,
-            "format": meta.format,
-            "post": meta.post,
+            "label": meta.label,
+            "text": meta.text,
+            "weighted_length": weighted_length(meta.text),
             "alt_text": meta.alt_text,
             "thesis": meta.thesis,
             "credits": meta.credits,
             "made_with": meta.made_with,
             "kind": self.entry.kind if self.entry else "",
+            "media_kind": self.media_kind,
+            "media_mime": self.media_mime,
             "duration": round(m.duration, 2) if m else None,
             "width": m.width if m else None,
             "height": m.height if m else None,
@@ -92,15 +115,21 @@ class Seat:
             "content_hash": self.content_hash,
             "poster": self.poster_b64,
             "score": round(self.score, 2),
-            "eligible": bool(self.technical and self.technical.eligible),
+            "judge": round(self.judge, 2),
+            "engagement": round(self.engagement, 2),
+            "posted": self.post is not None,
+            "post": self.post.to_dict() if self.post else None,
+            "eligible": self.eligible,
         }
         if include_notes:
+            data["notes"] = meta.notes
             data["technical"] = self.technical.to_dict() if self.technical else None
             data["craft"] = self.craft.to_dict() if self.craft else None
             data["craft_unavailable"] = self.craft_unavailable
             data["problems"] = list(self.entry.problems) if self.entry else []
             data["measurement"] = m.to_dict() if m else None
             data["sheet"] = self.sheet_b64
+            data["end"] = self.end_b64
         return data
 
 
@@ -122,11 +151,12 @@ class Runtime:
         self.started = False
         self.done = self.replay_mode
         self.results: dict[str, Any] | None = replay.get("results") if replay else None
+        self.feed: Feed = Feed(available=False)
         self.events: list[dict[str, Any]] = []
         self.global_viewers: set[WebSocket] = set()
         self.player_sockets: dict[int, set[WebSocket]] = {}
         self._task: asyncio.Task[None] | None = None
-        self.tmp = Path(tempfile.mkdtemp(prefix="svm-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="mkt-"))
         self.media: dict[int, bytes] = {}
         self.on_complete: Any = None
         self.finished_at: float | None = None
@@ -172,6 +202,16 @@ class Runtime:
         cfg = self.config
         self.phase = "intake"
         await self.publish({"type": "phase", "phase": self.phase})
+        self.feed = await asyncio.to_thread(load_feed, cfg.engagement)
+        await self.publish(
+            {
+                "type": "feed",
+                "available": self.feed.available,
+                "generated_at": self.feed.generated_at,
+                "posts": len(self.feed.posts),
+                "error": self.feed.error,
+            }
+        )
         for seat in self.seats:
             await asyncio.to_thread(self._intake, seat)
             await self.publish({"type": "seat", "seat": seat.public(include_notes=False)})
@@ -193,10 +233,7 @@ class Runtime:
                 await asyncio.to_thread(self._judge, seat, client)
                 if seat.content_hash:
                     judged_by_hash[seat.content_hash] = seat
-            seat.score = combine(seat.technical, seat.craft, cfg.judge) if seat.technical else 0.0
-            seat.status = "judged" if seat.technical and seat.technical.eligible else "failed"
-            seat.log(f"score {seat.score:.1f} (technical {seat.technical.score if seat.technical else 0:.0f}, "
-                     f"craft {seat.craft.score if seat.craft else 'n/a'})")
+            self._score(seat)
             await self.publish({"type": "seat", "seat": seat.public(include_notes=True)})
 
         self.phase = "complete"
@@ -206,7 +243,7 @@ class Runtime:
         self.done = True
         self.finished_at = time.monotonic()
         await self._notify_players_final()
-        logger.info("episode complete scores=%s feed_pick=%s", self.results["scores"], self.results["feed_pick"])
+        logger.info("episode complete scores=%s pick=%s", self.results["scores"], self.results["pick"])
         if cfg.linger_seconds:
             await asyncio.sleep(cfg.linger_seconds)
         if self.on_complete is not None:
@@ -230,7 +267,7 @@ class Runtime:
                 path = None
         if path is None or not path.exists():
             problem = "fatal: no player file staged for this seat"
-            seat.entry = Entry(EntryMeta(title=seat.name), None, "invalid", [problem])
+            seat.entry = Entry(EntryMeta(title=seat.name), None, "none", "invalid", [problem])
             seat.log(seat.entry.problems[0])
             return
         if not seat.content_hash:
@@ -240,31 +277,51 @@ class Runtime:
         seat.entry = load_entry(path, seat.workdir, self.config.limits, default_title=seat.name)
         for problem in seat.entry.problems:
             seat.log(problem)
-        if seat.entry.video_path is None:
+        seat.post = self.feed.post_for(seat.content_hash)
+        if seat.post is not None:
+            seat.log(
+                f"posted on @{self.feed.account or self.config.account} as {seat.post.tweet_id}: "
+                f"{json.dumps(seat.post.metrics)}"
+            )
+        if seat.entry.media_path is None:
             return
-        seat.measurement = measure(seat.entry.video_path)
+        media = seat.entry.media_path
+        seat.measurement = measure(media, seat.entry.media_kind)
         seat.log(f"measurement: {json.dumps(seat.measurement.to_dict())}")
         if not seat.measurement.ok:
             return
         m = seat.measurement
-        poster = seat.workdir / "poster.jpg"
-        if frame_at(seat.entry.video_path, min(m.duration * 0.4, max(m.duration - 0.5, 0)), poster):
-            seat.poster_b64 = base64.b64encode(poster.read_bytes()).decode()
-        sheet = seat.workdir / "sheet.jpg"
-        if contact_sheet(seat.entry.video_path, m.duration, self.config.judge.frames, sheet):
-            seat.sheet_b64 = base64.b64encode(sheet.read_bytes()).decode()
-        end = seat.workdir / "end.jpg"
-        if frame_at(seat.entry.video_path, max(m.duration - 1.0, 0), end):
-            seat.end_b64 = base64.b64encode(end.read_bytes()).decode()
+        seat.media_mime = MEDIA_TYPES[seat.entry.media_kind]
+        if seat.entry.media_kind == "video":
+            poster = seat.workdir / "poster.jpg"
+            if frame_at(media, min(m.duration * 0.4, max(m.duration - 0.5, 0)), poster):
+                seat.poster_b64 = base64.b64encode(poster.read_bytes()).decode()
+            sheet = seat.workdir / "sheet.jpg"
+            if contact_sheet(media, m.duration, self.config.judge.frames, sheet):
+                seat.sheet_b64 = base64.b64encode(sheet.read_bytes()).decode()
+            end = seat.workdir / "end.jpg"
+            if frame_at(media, max(m.duration - 1.0, 0), end):
+                seat.end_b64 = base64.b64encode(end.read_bytes()).decode()
+        else:
+            still = seat.workdir / "still.jpg"
+            if still_image(media, still):
+                seat.poster_b64 = base64.b64encode(still.read_bytes()).decode()
         with suppress(OSError):
-            self.media[seat.slot] = seat.entry.video_path.read_bytes()
+            self.media[seat.slot] = media.read_bytes()
 
     def _judge(self, seat: Seat, client: ModelClient | None) -> None:
         assert self.config is not None
         cfg = self.config
-        entry = seat.entry or Entry(EntryMeta(title=seat.name), None, "invalid", ["fatal: no entry"])
-        m = seat.measurement or Measurement(ok=False, error="not measured")
-        seat.technical = technical_review(entry, m, cfg.limits)
+        entry = seat.entry or Entry(EntryMeta(title=seat.name), None, "none", "invalid", ["fatal: no entry"])
+        model = client.model if client is not None else ""
+        if cfg.judge.use_cache and client is not None and seat.content_hash in self.feed.judge_cache:
+            cached = from_cache(self.feed.judge_cache[seat.content_hash], model)
+            if cached is not None:
+                seat.technical, seat.craft = cached
+                seat.log(f"judgement reused from the feed's judge cache (rubric {RUBRIC_VERSION}, {model})")
+                return
+            seat.log("judge cache entry ignored: different rubric or model")
+        seat.technical = technical_review(entry, seat.measurement, cfg.limits)
         for check in seat.technical.failures:
             seat.log(f"technical: {check.id} failed: {check.detail}")
         if not seat.technical.eligible:
@@ -272,29 +329,47 @@ class Runtime:
             return
         if client is None:
             return
-        sheet = (seat.workdir or self.tmp) / "sheet.jpg"
-        end = (seat.workdir or self.tmp) / "end.jpg"
-        if not sheet.exists():
+        workdir = seat.workdir or self.tmp
+        imagery = JudgeImagery(
+            still=(workdir / "still.jpg") if (workdir / "still.jpg").exists() else None,
+            sheet=(workdir / "sheet.jpg") if (workdir / "sheet.jpg").exists() else None,
+            end=(workdir / "end.jpg") if (workdir / "end.jpg").exists() else None,
+        )
+        if entry.media_path is not None and imagery.still is None and imagery.sheet is None:
             seat.craft_unavailable = True
-            seat.log("craft panel skipped: no contact sheet")
+            seat.log("craft panel skipped: media could not be rendered for the judge")
             return
-        seat.craft = craft_review(client, entry, m, sheet, end if end.exists() else None, cfg.brief, slot=seat.slot)
+        seat.craft = craft_review(client, entry, seat.measurement, imagery, cfg.brief, cfg.account, slot=seat.slot)
         if seat.craft is None:
             seat.craft_unavailable = client.available
-            seat.log("craft panel unavailable; scored on the technical panel only")
+            seat.log("craft panel unavailable; judged on the technical panel only")
         else:
             seat.log(f"craft: {json.dumps(seat.craft.to_dict())}")
+
+    def _score(self, seat: Seat) -> None:
+        assert self.config is not None
+        cfg = self.config
+        seat.judge = judge_score(seat.technical, seat.craft, cfg.judge) if seat.technical else 0.0
+        seat.engagement = engagement_score(seat.post.metrics if seat.post else None, cfg.engagement)
+        seat.score = blend(seat.judge, seat.engagement, cfg.engagement) if seat.eligible else 0.0
+        seat.status = "judged" if seat.eligible else "failed"
+        seat.log(
+            f"score {seat.score:.1f} = judge {seat.judge:.1f} "
+            f"(technical {seat.technical.score if seat.technical else 0:.0f}, "
+            f"craft {seat.craft.score if seat.craft else 'n/a'}) blended with engagement {seat.engagement:.1f}"
+        )
 
     # ------------------------------------------------------------------ outputs
 
     def _results(self) -> dict[str, Any]:
         assert self.config is not None
         cfg = self.config
-        eligible = [bool(s.technical and s.technical.eligible) for s in self.seats]
+        eligible = [s.eligible for s in self.seats]
         scores = [round(s.score, 2) for s in self.seats]
-        postable = [e and s.score >= cfg.judge.postable_threshold for s, e in zip(self.seats, eligible, strict=True)]
+        judge = [round(s.judge, 2) for s in self.seats]
+        postable = [s.eligible and s.post is None and s.judge >= cfg.judge.postable_threshold for s in self.seats]
         candidates = [s.slot for s, p in zip(self.seats, postable, strict=True) if p]
-        feed_pick = max(candidates, key=lambda i: scores[i]) if candidates else None
+        pick = max(candidates, key=lambda i: judge[i]) if candidates else None
         craft_values = [None if s.craft is None else round(s.craft.score, 1) for s in self.seats]
         if cfg.judge.mode == "technical":
             judge_mode = "technical"
@@ -305,19 +380,34 @@ class Runtime:
         return {
             "scores": scores,
             "eligible": eligible,
+            "judge": judge,
             "technical": [round(s.technical.score, 1) if s.technical else 0.0 for s in self.seats],
             "craft": craft_values,
+            "engagement": [round(s.engagement, 2) for s in self.seats],
+            "posted": [s.post is not None for s in self.seats],
+            "tweet_ids": [s.post.tweet_id if s.post else "" for s in self.seats],
             "postable": postable,
             "player_names": [s.name for s in self.seats],
-            "titles": [(s.entry.meta.title if s.entry else s.name) for s in self.seats],
-            "formats": [(s.entry.meta.format if s.entry else "other") for s in self.seats],
-            "durations_seconds": [round(s.measurement.duration, 2) if s.measurement else 0.0 for s in self.seats],
+            "labels": [(s.entry.meta.label if s.entry else s.name) for s in self.seats],
+            "texts": [(s.entry.meta.text if s.entry else "") for s in self.seats],
+            "media_kinds": [s.media_kind for s in self.seats],
+            "content_hashes": [s.content_hash for s in self.seats],
             "verdicts": [(s.craft.verdict if s.craft else self._technical_verdict(s)) for s in self.seats],
+            "judge_records": [
+                cache_record(s.technical, s.craft, cfg.judge.model) if s.technical else None for s in self.seats
+            ],
             "judge_mode": judge_mode,
             "judge_model": cfg.judge.model if judge_mode == "panel" else "",
-            "feed_pick": feed_pick,
+            "engagement_feed": {
+                "available": self.feed.available,
+                "generated_at": self.feed.generated_at,
+                "posts": len(self.feed.posts),
+                "error": self.feed.error,
+            },
+            "pick": pick,
             "top_score": max(scores) if scores else 0.0,
             "brief": cfg.brief,
+            "account": cfg.account,
         }
 
     @staticmethod
@@ -335,10 +425,18 @@ class Runtime:
         assert self.config is not None
         payload: dict[str, Any] = {
             "version": REPLAY_VERSION,
-            "game": "softmax-video-marketing",
+            "game": GAME_NAME,
             "game_version": __version__,
             "config": self.config.model_dump(exclude={"tokens"}),
             "brief": self.config.brief,
+            "account": self.config.account,
+            "feed": {
+                "available": self.feed.available,
+                "generated_at": self.feed.generated_at,
+                "account": self.feed.account,
+                "posts": len(self.feed.posts),
+                "error": self.feed.error,
+            },
             "entries": [s.public(include_notes=True) for s in self.seats],
             "results": self.results,
             "events": [e for e in self.events if e.get("type") != "seat"],
@@ -350,9 +448,7 @@ class Runtime:
             used = 0
             for seat in order:
                 blob = self.media.get(seat.slot)
-                if blob is None:
-                    continue
-                if used + len(blob) > budget:
+                if blob is None or used + len(blob) > budget:
                     continue
                 payload["media"][str(seat.slot)] = base64.b64encode(blob).decode()
                 used += len(blob)
@@ -360,13 +456,12 @@ class Runtime:
 
     def _write_outputs(self) -> None:
         assert self.config is not None and self.results is not None
-        # Seat logs and artifacts first (game-hosted contract), then player status, replay, and finally results.
         for seat in self.seats:
             if seat.log_uri:
                 text = "\n".join(seat.log_lines) + "\n"
                 with suppress(Exception):
                     write_data(seat.log_uri, text, content_type="text/plain")
-            if seat.artifact_uri and seat.slot in self.media:
+            if seat.artifact_uri and seat.entry is not None:
                 with suppress(Exception):
                     self._write_artifact(seat)
         if self.player_status_uri:
@@ -376,8 +471,8 @@ class Runtime:
                     {
                         "slot": s.slot,
                         "state": "exited",
-                        "exit_code": 0 if (s.technical and s.technical.eligible) else 1,
-                        "reason": "Judged" if (s.technical and s.technical.eligible) else "Ineligible entry",
+                        "exit_code": 0 if s.eligible else 1,
+                        "reason": "Judged" if s.eligible else "Ineligible entry",
                         "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     }
                     for s in self.seats
@@ -408,7 +503,8 @@ class Runtime:
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("entry.json", seat.entry.meta.model_dump_json(by_alias=True, indent=2))
             archive.writestr("judge.json", json.dumps(seat.public(include_notes=True), indent=2))
-            archive.writestr("video.mp4", self.media[seat.slot])
+            if seat.slot in self.media and seat.entry.media_path is not None:
+                archive.writestr(seat.entry.media_path.name, self.media[seat.slot])
         write_data(seat.artifact_uri, path.read_bytes(), content_type="application/zip")
 
     # ------------------------------------------------------------------ live surfaces
@@ -437,6 +533,12 @@ class Runtime:
             "started": self.started,
             "done": self.done,
             "brief": self.config.brief if self.config else (self.replay or {}).get("brief", ""),
+            "account": self.config.account if self.config else (self.replay or {}).get("account", ""),
+            "feed": {
+                "available": self.feed.available,
+                "generated_at": self.feed.generated_at,
+                "posts": len(self.feed.posts),
+            },
             "entries": [s.public(include_notes=include_notes) for s in self.seats],
             "results": self.results,
         }
@@ -495,11 +597,18 @@ class Runtime:
         payload = self.replay if self.replay is not None else self.replay_payload(include_media=True)
         return json.dumps(payload, separators=(",", ":")).encode()
 
-    def media_bytes(self, slot: int) -> bytes | None:
+    def media_bytes(self, slot: int) -> tuple[bytes, str] | None:
         if self.replay is not None:
             encoded = (self.replay.get("media") or {}).get(str(slot))
-            return base64.b64decode(encoded) if encoded else None
-        return self.media.get(slot)
+            entries = self.replay.get("entries") or []
+            mime = (
+                next((e.get("media_mime") for e in entries if e.get("slot") == slot), "") or "application/octet-stream"
+            )
+            return (base64.b64decode(encoded), mime) if encoded else None
+        blob = self.media.get(slot)
+        if blob is None:
+            return None
+        return blob, (self.seats[slot].media_mime or "application/octet-stream")
 
 
 def runtime_from_environment() -> Runtime:
@@ -524,7 +633,7 @@ def create_app(runtime: Runtime) -> FastAPI:
         yield
         await runtime.shutdown()
 
-    app = FastAPI(title="Softmax Video Marketing", lifespan=lifespan)
+    app = FastAPI(title="Softmax Marketing", lifespan=lifespan)
     jury_html = (STATIC_DIR / "jury.html").read_text(encoding="utf-8")
     player_html = (STATIC_DIR / "player.html").read_text(encoding="utf-8")
 
@@ -550,12 +659,13 @@ def create_app(runtime: Runtime) -> FastAPI:
     def replay_json() -> Response:
         return Response(runtime.replay_json(), media_type="application/json")
 
-    @app.get("/media/{slot}.mp4")
+    @app.get("/media/{slot}")
     def media(slot: int) -> Response:
-        blob = runtime.media_bytes(slot)
-        if blob is None:
+        found = runtime.media_bytes(slot)
+        if found is None:
             raise HTTPException(status_code=404, detail="no media for this seat")
-        return Response(blob, media_type="video/mp4")
+        blob, mime = found
+        return Response(blob, media_type=mime)
 
     @app.websocket("/player")
     async def player_socket(websocket: WebSocket) -> None:
