@@ -75,6 +75,9 @@ def main() -> int:
     ladder["divisions"] = [{**d, "division_id": division_id} for d in ladder["divisions"]]
     ladder["enabled"] = bool(args.enable)
     settings["ladder"] = ladder
+    # The desk shows each entry back (text, pictures, clip) through the platform's
+    # entry route, which serves a league's player files only when its owner says so.
+    settings["public_player_files"] = bool(desired.get("public_player_files", False))
     # Continuous ladders grade on arrival; the interval is inert and left unset.
     settings.pop("round_interval_minutes", None)
     status, body = call("POST", f"/leagues/{league}/settings", settings)
