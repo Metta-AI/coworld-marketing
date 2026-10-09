@@ -207,8 +207,72 @@ def test_single_item_checks_keep_their_plain_wording(tiny_image: Path, tmp_path:
     assert alt.detail == "media without alt text"
 
 
-def test_rubric_version_bumped_for_media_lists() -> None:
-    assert RUBRIC_VERSION == "post/2"
+def test_rubric_version_bumped_for_rule_winces() -> None:
+    assert RUBRIC_VERSION == "post/3"
+
+
+# --------------------------------------------------------------------------- readings, medians and rule winces
+
+
+def test_known_flags_keep_rule_winces_and_drop_hunches() -> None:
+    from marketing.judge import known_flags
+
+    flags = [
+        "hype: 'excited to announce' in line one",
+        "final frame states the thesis as a slogan over a logo card",
+        "alt text breaks the first-person frame",
+        "Typo: 'recieve'",
+        "hype: the same rule twice is one wince",
+        "hype: 'excited to announce' in line one",
+    ]
+    kept = known_flags(flags)
+    assert kept == [
+        "hype: 'excited to announce' in line one",
+        "Typo: 'recieve'",
+        "hype: the same rule twice is one wince",
+    ]
+    assert known_flags("not a list") == []
+    assert known_flags(None) == []
+
+
+def _reading(total: int, flags: list[str] | None = None, verdict: str = "v") -> dict:
+    return {
+        **{k: total for k in ("hook", "specific", "voice", "legible", "craft", "repostable")},
+        "cringe_flags": flags or [],
+        "notes": f"notes {total}",
+        "verdict": verdict,
+    }
+
+
+def test_aggregate_samples_takes_the_median_and_majority_flags() -> None:
+    from marketing.judge import aggregate_samples
+
+    review = aggregate_samples(
+        [
+            _reading(8, ["typo: 'teh'"], verdict="eight"),
+            _reading(3, ["typo: 'teh'", "hype: 'best ever'"], verdict="three"),
+            _reading(7, ["product_copy: lists features"], verdict="seven"),
+        ],
+        model="m",
+        attempts=3,
+        raw="r",
+    )
+    assert review.scores == {k: 7 for k in review.scores}
+    assert review.samples == 3
+    assert review.spread == 50.0
+    assert review.verdict == "seven" and review.notes == "notes 7"
+    # typo was raised by two of three readings; hype and product_copy by one each.
+    assert review.cringe_flags == ["typo: 'teh'"]
+    assert review.to_dict()["samples"] == 3 and review.to_dict()["spread"] == 50.0
+
+
+def test_aggregate_single_reading_is_itself() -> None:
+    from marketing.judge import CraftReview, aggregate_samples
+
+    review = aggregate_samples([_reading(6, ["exclamation: 'Wow!'"])], model="m", attempts=1, raw="r")
+    assert review.samples == 1 and review.spread == 0.0 and review.cringe_flags == ["exclamation: 'Wow!'"]
+    restored = CraftReview.from_dict(review.to_dict())
+    assert restored.samples == 1 and restored.cringe_flags == review.cringe_flags
 
 
 def test_build_messages_with_three_stills() -> None:

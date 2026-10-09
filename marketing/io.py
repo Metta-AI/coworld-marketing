@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from urllib.parse import unquote, urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
-HTTP_USER_AGENT = "coworld-marketing/0.3"
+HTTP_USER_AGENT = "coworld-marketing/0.3.1"
 
 
 def uri_to_path(uri: str) -> Path | None:

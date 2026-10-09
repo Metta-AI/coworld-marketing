@@ -27,6 +27,12 @@ class JudgeConfig(BaseModel):
     max_tokens: int = Field(default=900, ge=200, le=4000)
     timeout_seconds: float = Field(default=90, gt=0, le=300)
     retries: int = Field(default=2, ge=0, le=5)
+    samples: int = Field(
+        default=3, ge=1, le=5, description="Independent craft readings per entry; the review is their median."
+    )
+    sample_temperature: float = Field(
+        default=0.7, ge=0, le=1.5, description="Temperature for each reading when samples > 1 (0.2 when 1)."
+    )
     technical_weight: float = Field(default=0.25, ge=0, le=1)
     craft_weight: float = Field(default=0.75, ge=0, le=1)
     postable_threshold: float = Field(

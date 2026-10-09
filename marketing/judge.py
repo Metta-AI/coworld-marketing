@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import statistics
 import time
 from collections.abc import Sequence
 from contextlib import suppress
@@ -23,7 +24,24 @@ from marketing.probe import Measurement
 
 logger = logging.getLogger("marketing.judge")
 
-RUBRIC_VERSION = "post/2"
+RUBRIC_VERSION = "post/3"
+# THE ONLY WINCES THERE ARE. A flag names a rule the post breaks (the rubric lists
+# them with their evidence); taste lives in the six scores. Anything the model
+# flags outside this list is dropped, so a judge's hunch about an end card or the
+# point of view of an alt text can never read as a fault on the board.
+WINCE_RULES = (
+    "hashtag_pile",
+    "exclamation",
+    "emoji_punctuation",
+    "hype",
+    "engagement_bait",
+    "product_copy",
+    "self_congratulation",
+    "unsupported_claim",
+    "typo",
+    "illegible_media",
+    "mascot_cheering",
+)
 CRAFT_KEYS = ("hook", "specific", "voice", "legible", "craft", "repostable")
 CRAFT_WEIGHTS = {
     "hook": 0.20,
@@ -245,6 +263,11 @@ class CraftReview:
     attempts: int
     raw: str = ""
     cached: bool = False
+    # How many independent readings the review is the median of, and how far
+    # apart their totals were (0 to 100). A wide spread is the judge saying it
+    # is unsure; the board shows it next to the grade.
+    samples: int = 1
+    spread: float = 0.0
 
     @property
     def score(self) -> float:
@@ -260,6 +283,8 @@ class CraftReview:
             "model": self.model,
             "attempts": self.attempts,
             "cached": self.cached,
+            "samples": self.samples,
+            "spread": round(self.spread, 1),
         }
 
     @classmethod
@@ -273,6 +298,8 @@ class CraftReview:
             model=str(data.get("model", "")),
             attempts=int(data.get("attempts", 0) or 0),
             cached=True,
+            samples=max(1, int(data.get("samples", 1) or 1)),
+            spread=float(data.get("spread", 0.0) or 0.0),
         )
 
 
@@ -297,14 +324,14 @@ class ModelClient:
     def available(self) -> bool:
         return self.source != "none"
 
-    def complete(self, messages: list[dict[str, Any]], *, slot: int | None) -> str:
+    def complete(self, messages: list[dict[str, Any]], *, slot: int | None, temperature: float = 0.2) -> str:
         body = {
             "model": self.model,
             "messages": messages,
             "max_tokens": self.cfg.max_tokens,
-            "temperature": 0.2,
+            "temperature": temperature,
         }
-        headers = {"Content-Type": "application/json", "User-Agent": "coworld-marketing/0.3"}
+        headers = {"Content-Type": "application/json", "User-Agent": "coworld-marketing/0.3.1"}
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"
         if slot is not None and self.source == "sidecar":
@@ -418,37 +445,72 @@ def build_messages(
     return [{"role": "system", "content": rubric_text()}, {"role": "user", "content": content}]
 
 
-def craft_review(
-    client: ModelClient,
-    entry: Entry,
-    m: Sequence[Measurement] | Measurement | None,
-    imagery: JudgeImagery,
-    brief: str,
-    account: str,
-    *,
-    slot: int,
-) -> CraftReview | None:
-    if not client.available:
-        return None
-    messages = build_messages(entry, m, imagery, brief, account)
+def known_flags(flags: Any) -> list[str]:
+    """Keep only flags that name a rule in WINCE_RULES ("rule: evidence"), trimmed; drop the judge's hunches."""
+    if not isinstance(flags, list):
+        flags = [flags] if flags else []
+    kept: list[str] = []
+    for flag in flags:
+        text = str(flag).strip()
+        rule = text.split(":", 1)[0].strip().lower().replace(" ", "_").replace("-", "_")
+        if rule in WINCE_RULES and text[:120] not in kept:
+            kept.append(text[:120])
+    return kept[:12]
+
+
+def _flag_rule(flag: str) -> str:
+    return flag.split(":", 1)[0].strip().lower()
+
+
+def aggregate_samples(samples: list[dict[str, Any]], *, model: str, attempts: int, raw: str) -> CraftReview:
+    """One review out of several readings: per-dimension medians, majority flags, the middle reading's words.
+
+    The median is robust to one reading that woke up grumpy; a flag has to be
+    raised by more than half the readings to count; the notes and verdict come
+    from the reading whose total sits closest to the median total, so the words
+    match the number.
+    """
+    assert samples, "aggregate_samples needs at least one sample"
+    scored = [{k: _clamp_score(d.get(k)) for k in CRAFT_KEYS} for d in samples]
+    scores = {k: int(statistics.median(sorted(sc[k] for sc in scored)) + 0.5) for k in CRAFT_KEYS}
+    totals = [10.0 * sum(CRAFT_WEIGHTS[k] * sc[k] for k in CRAFT_KEYS) for sc in scored]
+    median_total = statistics.median(totals)
+    middle = min(range(len(samples)), key=lambda i: abs(totals[i] - median_total))
+    counts: dict[str, int] = {}
+    wording: dict[str, str] = {}
+    for d in samples:
+        seen: set[str] = set()
+        for flag in known_flags(d.get("cringe_flags")):
+            rule = _flag_rule(flag)
+            if rule in seen:
+                continue
+            seen.add(rule)
+            counts[rule] = counts.get(rule, 0) + 1
+            wording.setdefault(rule, flag)
+    needed = len(samples) // 2 + 1
+    flags = [wording[rule] for rule in WINCE_RULES if counts.get(rule, 0) >= needed]
+    return CraftReview(
+        scores=scores,
+        cringe_flags=flags,
+        notes=str(samples[middle].get("notes", ""))[:800],
+        verdict=str(samples[middle].get("verdict", ""))[:280],
+        model=model,
+        attempts=attempts,
+        raw=raw[:4000],
+        samples=len(samples),
+        spread=round(max(totals) - min(totals), 1),
+    )
+
+
+def _one_reading(
+    client: ModelClient, messages: list[dict[str, Any]], *, slot: int, temperature: float
+) -> tuple[dict[str, Any], str, int]:
+    """One parsed reading from the model, with the retry loop the panel always had."""
     last_error = ""
     for attempt in range(1, client.cfg.retries + 2):
         try:
-            raw = client.complete(messages, slot=slot)
-            data = _extract_json(raw)
-            scores = {k: _clamp_score(data.get(k)) for k in CRAFT_KEYS}
-            flags = data.get("cringe_flags") or []
-            if not isinstance(flags, list):
-                flags = [str(flags)]
-            return CraftReview(
-                scores=scores,
-                cringe_flags=[str(f)[:120] for f in flags][:12],
-                notes=str(data.get("notes", ""))[:800],
-                verdict=str(data.get("verdict", ""))[:280],
-                model=client.model,
-                attempts=attempt,
-                raw=raw[:4000],
-            )
+            raw = client.complete(messages, slot=slot, temperature=temperature)
+            return _extract_json(raw), raw, attempt
         except HTTPError as error:
             body = ""
             with suppress(Exception):
@@ -465,10 +527,49 @@ def craft_review(
                 break
         except (URLError, TimeoutError, OSError, ValueError, KeyError, RuntimeError, json.JSONDecodeError) as error:
             last_error = f"{type(error).__name__}: {error}"
-        logger.warning("craft review attempt %d failed for slot %d: %s", attempt, slot, last_error)
+        logger.warning("craft reading attempt %d failed for slot %d: %s", attempt, slot, last_error)
         time.sleep(min(2.0 * attempt, 6.0))
-    logger.warning("craft review unavailable for slot %d: %s", slot, last_error)
-    return None
+    raise RuntimeError(last_error or "no reading")
+
+
+def craft_review(
+    client: ModelClient,
+    entry: Entry,
+    m: Sequence[Measurement] | Measurement | None,
+    imagery: JudgeImagery,
+    brief: str,
+    account: str,
+    *,
+    slot: int,
+) -> CraftReview | None:
+    """The craft panel: `cfg.samples` independent readings of the same prompt, folded into one review.
+
+    One reading at temperature 0.2 when `samples` is 1 (the old behaviour);
+    otherwise each reading runs at `sample_temperature` so they can disagree,
+    and `aggregate_samples` takes the median. A reading that fails after its
+    retries is skipped; the review is None only when none succeeded.
+    """
+    if not client.available:
+        return None
+    messages = build_messages(entry, m, imagery, brief, account)
+    wanted = max(1, client.cfg.samples)
+    temperature = client.cfg.sample_temperature if wanted > 1 else 0.2
+    readings: list[dict[str, Any]] = []
+    raws: list[str] = []
+    attempts = 0
+    for _ in range(wanted):
+        try:
+            data, raw, used = _one_reading(client, messages, slot=slot, temperature=temperature)
+        except RuntimeError as error:
+            logger.warning("craft reading unavailable for slot %d: %s", slot, error)
+            continue
+        readings.append(data)
+        raws.append(raw)
+        attempts += used
+    if not readings:
+        logger.warning("craft review unavailable for slot %d", slot)
+        return None
+    return aggregate_samples(readings, model=client.model, attempts=attempts, raw="\n---\n".join(raws))
 
 
 def judge_score(technical: TechnicalReview, craft: CraftReview | None, cfg: JudgeConfig) -> float:

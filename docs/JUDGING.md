@@ -64,3 +64,9 @@ Default targets: 10,000 impressions, 100 likes, 25 reposts, 10 replies. Half a t
 ## Postable and the pick
 
 An entry is `postable` when it is eligible, not yet published, and its judge score is at or above `postable_threshold` (70). The highest judge score among postable entries is `results.pick`: the next post the team should publish. The jury page shows its text and alt text with a copy button. Publishing stays a human act; the agent notices the post on the account afterwards by matching its text.
+
+## Winces are rules, not taste (rubric post/3)
+
+The craft panel's `cringe_flags` name a rule the post breaks, each written as `rule: evidence`, from a closed list: `hashtag_pile`, `exclamation`, `emoji_punctuation`, `hype`, `engagement_bait`, `product_copy`, `self_congratulation`, `unsupported_claim`, `typo`, `illegible_media`, `mascot_cheering`. Anything the model flags outside that list is dropped before it reaches the board. Taste lives in the six scores and the notes. The rubric also names what never counts against a post: a closing logo card or URL, alt text that plainly describes the media, the post saying its idea once in words.
+
+The panel reads each entry `judge.samples` times (default 3) at `judge.sample_temperature` (default 0.7) and reports the per-dimension median, the flags a majority of readings raised, and the notes and verdict of the reading closest to the median. `craft.samples` and `craft.spread` (the gap between the highest and lowest reading, 0 to 100) ride in the judge record so the board can show how sure the judge was.
