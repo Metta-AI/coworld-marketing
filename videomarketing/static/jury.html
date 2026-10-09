@@ -9,57 +9,78 @@
   :root {
     --bg:#fffdf4; --surface:#fffaf0; --surface-alt:#f8f6ef; --fg:#111827; --fg-subtle:#555555; --fg-muted:#6b6560;
     --navy:#1a3875; --sage:#5d6d41; --terracotta:#945637; --gold:#80601f; --accent:#5573a0; --accent-soft:#eef2f7;
-    --border:#e4dac8; --border-strong:#d4c9b5; --border-subtle:#f0ebe1; --exclusive:#8f5b3f;
+    --border:#e4dac8; --border-strong:#d4c9b5; --border-subtle:#f0ebe1;
   }
   * { box-sizing:border-box; }
   html, body { background:var(--bg); color:var(--fg); margin:0; }
   body { font:15px/1.55 "Merriweather Sans", system-ui, sans-serif; }
-  main { max-width:960px; margin:0 auto; padding:28px 20px 72px; }
+  main { max-width:1040px; margin:0 auto; padding:22px 20px 56px; }
   .eyebrow { font-size:11px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--fg-subtle); }
-  h1 { font:700 34px/1.15 Merriweather, Georgia, serif; margin:4px 0 10px; text-wrap:balance; }
-  .masthead { border-bottom:2px solid var(--border-strong); padding-bottom:14px; margin-bottom:6px; }
-  .brief { font:italic 400 16px/1.5 Merriweather, Georgia, serif; color:var(--fg-subtle); max-width:68ch; margin:8px 0 0; }
-  .meta { display:flex; flex-wrap:wrap; gap:6px 18px; color:var(--fg-muted); font-size:13px; margin:12px 0 0; }
+  h1 { font:700 30px/1.15 Merriweather, Georgia, serif; margin:2px 0 6px; text-wrap:balance; }
+  .masthead { border-bottom:2px solid var(--border-strong); padding-bottom:10px; margin-bottom:14px; }
+  .brief { font:italic 400 14.5px/1.45 Merriweather, Georgia, serif; color:var(--fg-subtle); max-width:78ch; margin:4px 0 0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; }
+  .brief.open { -webkit-line-clamp:unset; display:block; }
+  .meta { display:flex; flex-wrap:wrap; gap:4px 16px; color:var(--fg-muted); font-size:13px; margin:8px 0 0; }
   .meta b { color:var(--fg); font-weight:600; }
   .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--gold); margin-right:6px; animation:pulse 1.5s ease infinite; vertical-align:middle; }
   @keyframes pulse { 0%,100%{opacity:.35} 50%{opacity:1} }
-  h2 { font:700 12px/1.3 Merriweather, Georgia, serif; letter-spacing:.12em; text-transform:uppercase; color:var(--navy); margin:34px 0 10px; }
-  .entry { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px 28px; padding:22px 0; border-bottom:1px solid var(--border); }
-  .entry:last-child { border-bottom:0; }
-  .entry.pick { background:linear-gradient(90deg, rgba(128,96,31,.06), transparent 60%); margin:0 -20px; padding:22px 20px; border-bottom:1px solid var(--border); }
-  .rankline { display:flex; align-items:baseline; gap:12px; }
+
+  .stage { position:relative; }
+  .player { position:relative; background:#0e0e0e; border-radius:3px; overflow:hidden; aspect-ratio:16/9; max-height:62vh; width:100%; }
+  .player video { width:100%; height:100%; display:block; object-fit:contain; background:#0e0e0e; }
+  .noimg { width:100%; height:100%; display:grid; place-items:center; color:#d9d2c3; font-style:italic; }
+  .nav { position:absolute; top:50%; transform:translateY(-50%); width:44px; height:44px; border-radius:50%; border:1px solid var(--border-strong); background:rgba(255,253,244,.92); color:var(--fg); font:700 22px/1 "Merriweather Sans", sans-serif; cursor:pointer; display:grid; place-items:center; padding:0 0 2px; box-shadow:0 1px 2px rgba(0,0,0,.18); }
+  .nav:hover { background:var(--surface-alt); } .nav:active { background:var(--accent-soft); } .nav:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .nav[disabled] { opacity:.35; cursor:default; }
+  .nav.prev { left:12px; } .nav.next { right:12px; }
+  .counter { position:absolute; left:12px; top:10px; font:600 11px/1 "Merriweather Sans", sans-serif; letter-spacing:.1em; text-transform:uppercase; color:#fffdf4; background:rgba(14,14,14,.55); padding:6px 8px; border-radius:3px; }
+
+  .strip { display:flex; gap:8px; margin:10px 0 0; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; }
+  .thumb { flex:none; width:118px; aspect-ratio:16/9; border-radius:3px; overflow:hidden; border:2px solid transparent; background:#0e0e0e; cursor:pointer; position:relative; padding:0; }
+  .thumb img { width:100%; height:100%; object-fit:cover; display:block; opacity:.82; }
+  .thumb:hover img { opacity:1; } .thumb.current { border-color:var(--navy); } .thumb.current img { opacity:1; }
+  .thumb:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .thumb .r { position:absolute; left:5px; top:4px; }
+  .thumb .noposter { width:100%; height:100%; display:grid; place-items:center; color:#d9d2c3; font-size:11px; }
+
+  .caption { display:grid; grid-template-columns:minmax(0,1fr) minmax(200px,38%); gap:4px 24px; align-items:start; margin-top:14px; }
+  .rankline { display:flex; align-items:center; gap:10px; min-width:0; }
   .medal { width:24px; height:24px; border-radius:50%; display:inline-grid; place-items:center; font:700 12px/1 "Merriweather Sans", sans-serif; box-shadow:inset 0 1px 0 rgba(255,255,255,.3), inset 0 -1px 0 rgba(0,0,0,.08); flex:none; }
   .m1 { background:linear-gradient(180deg,#f4cf7a,#c28a2b); color:#3b2505; border:1px solid #a4731d; }
   .m2 { background:linear-gradient(180deg,#e8e8e8,#b0b0b0); color:#2a2a2a; border:1px solid #8a8a8a; }
   .m3 { background:linear-gradient(180deg,#dfa778,#9c5a2d); color:#3b1f0a; border:1px solid #7e4c26; }
-  .rank { font:700 15px/1 "Merriweather Sans", sans-serif; color:var(--fg-muted); min-width:24px; text-align:center; }
+  .rank { font:700 13px/1 "Merriweather Sans", sans-serif; color:var(--fg-muted); min-width:24px; text-align:center; }
+  .thumb .medal { width:18px; height:18px; font-size:10px; } .thumb .rank { color:#fffdf4; text-shadow:0 1px 2px rgba(0,0,0,.6); }
   .title { font:700 22px/1.25 Merriweather, Georgia, serif; margin:0; }
   .by { color:var(--fg-muted); font-size:13px; margin-top:2px; }
   .chip { display:inline-block; height:20px; padding:0 7px; border-radius:3px; font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; line-height:20px; background:var(--surface-alt); color:var(--fg-subtle); margin-left:6px; vertical-align:middle; }
   .chip.gold { background:rgba(128,96,31,.14); color:var(--gold); }
   .chip.err { background:rgba(179,110,78,.14); color:var(--terracotta); }
   .chip.ok { background:rgba(110,128,80,.14); color:var(--sage); }
-  .score { font:700 40px/1 Merriweather, Georgia, serif; font-variant-numeric:tabular-nums; margin:10px 0 2px; }
+  .score { font:700 40px/1 Merriweather, Georgia, serif; font-variant-numeric:tabular-nums; text-align:right; }
   .score small { font:600 12px/1 "Merriweather Sans", sans-serif; color:var(--fg-muted); letter-spacing:.06em; margin-left:6px; }
-  .sub { font-family: ui-monospace, Menlo, monospace; font-size:12.5px; color:var(--fg-subtle); font-variant-numeric:tabular-nums; }
-  .notes { font:400 15px/1.5 Merriweather, Georgia, serif; margin:10px 0 0; max-width:62ch; }
+  .sub { font-family: ui-monospace, Menlo, monospace; font-size:12px; color:var(--fg-subtle); font-variant-numeric:tabular-nums; text-align:right; margin-top:4px; line-height:1.5; }
+  .judge { grid-column:1 / -1; max-width:70ch; }
+  .notes { font:400 15px/1.5 Merriweather, Georgia, serif; margin:8px 0 0; }
   .verdict { font:italic 400 15px/1.5 Merriweather, Georgia, serif; color:var(--fg-subtle); margin:8px 0 0; }
   .flags { color:var(--terracotta); font-size:13px; margin-top:6px; }
   .checks { margin:8px 0 0; padding:0; list-style:none; font-size:13px; color:var(--fg-subtle); }
   .checks li { padding:2px 0; border-top:1px solid var(--border-subtle); }
   .checks li.bad { color:var(--terracotta); }
-  video { width:100%; aspect-ratio:16/9; background:#0e0e0e; border-radius:3px; display:block; }
-  .noimg { width:100%; aspect-ratio:16/9; display:grid; place-items:center; color:var(--fg-muted); border:1px dashed var(--border); border-radius:3px; font-style:italic; }
+  details summary { cursor:pointer; color:var(--fg-muted); font-size:13px; margin-top:10px; }
+  .sheet { margin-top:10px; width:100%; border:1px solid var(--border); border-radius:3px; }
   .post { margin-top:14px; border-left:3px solid var(--gold); padding:4px 12px; }
   .post .eyebrow { color:var(--gold); }
   .post p { margin:4px 0 8px; font:400 15px/1.5 Merriweather, Georgia, serif; white-space:pre-wrap; }
-  button { font:600 12px/1 "Merriweather Sans", sans-serif; border-radius:3px; padding:7px 10px; cursor:pointer; background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); }
-  button:hover { background:var(--surface-alt); } button:active { background:var(--accent-soft); } button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  details summary { cursor:pointer; color:var(--fg-muted); font-size:13px; margin-top:8px; }
+  button.copy { font:600 12px/1 "Merriweather Sans", sans-serif; border-radius:3px; padding:7px 10px; cursor:pointer; background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); }
+  button.copy:hover { background:var(--surface-alt); } button.copy:active { background:var(--accent-soft); } button.copy:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   .empty { border:1px dashed var(--border); padding:28px; text-align:center; color:var(--fg-muted); font-style:italic; }
   .error { border-left:3px solid var(--terracotta); background:rgba(179,110,78,.06); padding:10px 14px; margin:18px 0; }
-  .sheet { margin-top:10px; width:100%; border:1px solid var(--border); border-radius:3px; }
-  @media (max-width: 720px) { .entry { grid-template-columns:1fr; } .entry.pick { margin:0 -16px; padding:18px 16px; } main { padding:20px 16px 56px; } h1 { font-size:28px; } }
+  @media (max-width: 720px) {
+    main { padding:16px 16px 48px; } h1 { font-size:26px; }
+    .caption { grid-template-columns:1fr; } .score, .sub { text-align:left; }
+    .nav { width:40px; height:40px; } .thumb { width:96px; }
+  }
 </style>
 </head>
 <body>
@@ -67,14 +88,11 @@
   <header class="masthead">
     <div class="eyebrow">Softmax Video Marketing</div>
     <h1 id="headline">Daily jury</h1>
-    <p class="brief" id="brief"></p>
+    <p class="brief" id="brief" title="Click to expand"></p>
     <div class="meta" id="meta"></div>
   </header>
   <div id="error" hidden></div>
-  <section>
-    <h2 id="section-title">Entries</h2>
-    <div id="entries"><div class="empty">No entries yet.</div></div>
-  </section>
+  <section class="stage" id="stage" aria-live="polite"><div class="empty">No entries yet.</div></section>
 </main>
 <script>
 (function () {
@@ -85,16 +103,36 @@
   const fmtDur = (d) => d == null ? '' : `${Math.round(d)} s`;
   let mediaSrc = (slot) => new URL(`../media/${slot}.mp4`, location.href).toString();
   const blobUrls = {};
-  let state = { phase: 'waiting', done: false, brief: '', entries: [], results: null, mode: 'live' };
+  let state = { phase: 'waiting', done: false, brief: '', entries: [], results: null, mode: 'live', threshold: 70 };
+  let index = 0;
+  let slides = [];
+  let videoEl = null;
+
+  $('brief').addEventListener('click', () => $('brief').classList.toggle('open'));
 
   function showError(message) {
     const el = $('error'); el.hidden = false; el.className = 'error'; el.textContent = message;
     post({ type: 'error', message });
   }
 
-  function medal(rank) {
-    if (rank <= 3) return `<span class="medal m${rank}">${rank}</span>`;
-    return `<span class="rank">${rank}</span>`;
+  function medal(rank, cls) {
+    if (rank <= 3) return `<span class="medal m${rank} ${cls || ''}">${rank}</span>`;
+    return `<span class="rank ${cls || ''}">${rank}</span>`;
+  }
+
+  // Collapse identical submissions (filler seats repeat a real entry) into one slide.
+  function buildSlides() {
+    const list = state.entries.slice();
+    if (state.done) list.sort((a, b) => (b.score - a.score) || (a.slot - b.slot));
+    const seen = new Map();
+    const out = [];
+    for (const e of list) {
+      const key = (e.content_hash && e.kind !== 'invalid') ? e.content_hash : `slot-${e.slot}`;
+      if (seen.has(key)) { seen.get(key).seats.push(e.slot); continue; }
+      const s = { entry: e, seats: [e.slot] };
+      seen.set(key, s); out.push(s);
+    }
+    return out;
   }
 
   function renderMeta() {
@@ -102,66 +140,84 @@
     const bits = [];
     if (!state.done) bits.push(`<span><span class="pulse"></span>${esc(state.phase)}</span>`);
     else bits.push(`<span>Judged · <b>${r ? esc(r.judge_mode) : ''}</b>${r && r.judge_model ? ' · ' + esc(r.judge_model) : ''}</span>`);
-    bits.push(`<span><b>${state.entries.length}</b> ${state.entries.length === 1 ? 'entry' : 'entries'}</span>`);
+    const dup = state.entries.length - slides.length;
+    bits.push(`<span><b>${slides.length}</b> ${slides.length === 1 ? 'entry' : 'entries'}${dup > 0 ? ` <span style="color:var(--fg-muted)">(${state.entries.length} seats)</span>` : ''}</span>`);
     if (r) {
-      const n = r.postable.filter(Boolean).length;
-      bits.push(`<span><b>${n}</b> postable (score ≥ ${esc(state.threshold ?? 70)})</span>`);
+      const postable = slides.filter(s => r.postable[s.entry.slot]).length;
+      bits.push(`<span><b>${postable}</b> postable (score ≥ ${esc(state.threshold)})</span>`);
       bits.push(`<span>top <b>${Number(r.top_score).toFixed(1)}</b> / 100</span>`);
     }
     $('meta').innerHTML = bits.join('');
     $('brief').textContent = state.brief || '';
-    $('headline').textContent = state.done ? (r && r.feed_pick != null ? 'Today’s pick' : 'Daily jury') : 'Daily jury';
-    $('section-title').textContent = state.done ? 'Ranking' : 'Entries';
+    $('headline').textContent = state.done && r && r.feed_pick != null ? 'Today’s pick' : 'Daily jury';
   }
 
-  function videoFor(e, autoplay) {
-    const src = blobUrls[e.slot] || mediaSrc(e.slot);
-    const poster = e.poster ? ` poster="data:image/jpeg;base64,${e.poster}"` : '';
-    if (!e.poster && !blobUrls[e.slot] && state.mode === 'replay') return `<div class="noimg">No video in this replay</div>`;
-    return `<video controls preload="metadata" playsinline ${autoplay ? 'autoplay muted loop' : ''}${poster} src="${src}"></video>`;
-  }
+  function slideVideoSrc(e) { return blobUrls[e.slot] || (state.mode === 'replay' ? null : mediaSrc(e.slot)); }
 
-  function renderEntries() {
+  function renderStage() {
+    const stage = $('stage');
+    if (!slides.length) { stage.innerHTML = '<div class="empty">No entries yet.</div>'; videoEl = null; return; }
+    index = Math.max(0, Math.min(index, slides.length - 1));
     const r = state.results;
-    const list = state.entries.slice();
-    if (state.done) list.sort((a, b) => (b.score - a.score) || (a.slot - b.slot));
-    if (!list.length) { $('entries').innerHTML = '<div class="empty">No entries yet.</div>'; return; }
-    $('entries').innerHTML = list.map((e, i) => {
-      const rank = i + 1;
-      const isPick = r && r.feed_pick === e.slot;
-      const chips = `<span class="chip">${esc(e.format)}</span>` + (isPick ? '<span class="chip gold">Feed pick</span>' : '') +
-        (state.done && !e.eligible ? '<span class="chip err">Ineligible</span>' : '') +
-        (state.done && e.eligible && r && r.postable[e.slot] && !isPick ? '<span class="chip ok">Postable</span>' : '');
-      const t = e.technical, c = e.craft;
-      let sub = '';
-      if (state.done && t) {
-        sub = `technical ${Number(t.score).toFixed(0)}` + (c ? ` · craft ${Number(c.score).toFixed(0)} (legible ${c.scores.legible} · story ${c.scores.story_not_statement} · motion ${c.scores.motion} · voice ${c.scores.voice} · craft ${c.scores.craft} · postable ${c.scores.postable})` : (e.craft_unavailable ? ' · craft panel unavailable' : ''));
-      }
-      const fails = t ? t.checks.filter(x => !x.ok) : [];
-      const checks = state.done && t ? `<details><summary>Technical panel: ${fails.length ? fails.length + ' finding' + (fails.length > 1 ? 's' : '') : 'every check passed'}</summary><ul class="checks">${t.checks.map(x => `<li class="${x.ok ? '' : 'bad'}">${esc(x.id)} — ${esc(x.detail)}${x.ok ? '' : (x.gate ? ' (gate)' : ` (−${x.penalty})`)}</li>`).join('')}</ul>${e.sheet ? `<img class="sheet" alt="Contact sheet for ${esc(e.title)}" src="data:image/jpeg;base64,${e.sheet}">` : ''}</details>` : '';
-      const techVerdict = state.done && r ? String(r.verdicts[e.slot] || '') : '';
-      const notes = c ? `<p class="notes">${esc(c.notes)}</p>${c.cringe_flags && c.cringe_flags.length ? `<div class="flags">Flags: ${esc(c.cringe_flags.join('; '))}</div>` : ''}<p class="verdict">${esc(c.verdict)}</p>` :
-        (techVerdict && !techVerdict.startsWith('Technical panel') ? `<p class="verdict">${esc(techVerdict)}</p>` : (e.craft_unavailable ? '<p class="verdict">Craft panel unavailable; scored on the technical panel only.</p>' : ''));
-      const postBlock = isPick ? `<div class="post"><div class="eyebrow">Post text · ${(e.post || '').length}/280</div><p>${esc(e.post || '(no post text supplied)')}</p>${e.alt_text ? `<div class="eyebrow">Alt text</div><p>${esc(e.alt_text)}</p>` : ''}<button type="button" data-copy="${esc(e.post || '')}">Copy post text</button></div>` : '';
-      const score = state.done ? `<div class="score">${Number(e.score).toFixed(1)}<small>/ 100</small></div><div class="sub">${esc(sub)}</div>` : `<div class="sub">${esc(e.status)}${e.duration ? ' · ' + fmtDur(e.duration) + ` · ${e.width}x${e.height}` : ''}</div>`;
-      return `<article class="entry${isPick ? ' pick' : ''}" id="entry-${e.slot}">
-        <div>${videoFor(e, state.done && (isPick || (r && r.feed_pick == null && i === 0)))}</div>
-        <div>
-          <div class="rankline">${state.done ? medal(rank) : `<span class="rank">${e.slot + 1}</span>`}<div><h3 class="title">${esc(e.title)}${chips}</h3><div class="by">by ${esc(e.name)}${e.duration ? ' · ' + fmtDur(e.duration) : ''}${e.thesis ? ' · <i>' + esc(e.thesis) + '</i>' : ''}</div></div></div>
-          ${score}
-          ${notes}
-          ${checks}
-          ${postBlock}
-        </div>
-      </article>`;
-    }).join('');
-    document.querySelectorAll('button[data-copy]').forEach(b => b.addEventListener('click', async () => {
+    const { entry: e, seats } = slides[index];
+    const rank = index + 1;
+    const isPick = r && r.feed_pick != null && seats.includes(r.feed_pick);
+    const src = slideVideoSrc(e);
+    const poster = e.poster ? `data:image/jpeg;base64,${e.poster}` : '';
+
+    const strip = slides.map((s, i) => `<button type="button" class="thumb${i === index ? ' current' : ''}" data-i="${i}" aria-label="Show ${esc(s.entry.title)}">${s.entry.poster ? `<img alt="" src="data:image/jpeg;base64,${s.entry.poster}">` : '<div class="noposter">no video</div>'}<span class="r">${state.done ? medal(i + 1) : `<span class="rank">${s.entry.slot + 1}</span>`}</span></button>`).join('');
+
+    const chips = `<span class="chip">${esc(e.format)}</span>` + (isPick ? '<span class="chip gold">Feed pick</span>' : '') +
+      (state.done && !e.eligible ? '<span class="chip err">Ineligible</span>' : '') +
+      (state.done && e.eligible && r && r.postable[e.slot] && !isPick ? '<span class="chip ok">Postable</span>' : '');
+    const t = e.technical, c = e.craft;
+    let sub = '';
+    if (state.done && t) sub = `technical ${Number(t.score).toFixed(0)}` + (c ? ` · craft ${Number(c.score).toFixed(0)} (legible ${c.scores.legible} · story ${c.scores.story_not_statement} · motion ${c.scores.motion} · voice ${c.scores.voice} · craft ${c.scores.craft} · postable ${c.scores.postable})` : (e.craft_unavailable ? ' · craft panel unavailable' : ''));
+    const scoreBlock = state.done ? `<div><div class="score">${Number(e.score).toFixed(1)}<small>/ 100</small></div><div class="sub">${esc(sub)}</div></div>` : `<div class="sub">${esc(e.status)}</div>`;
+    const techVerdict = state.done && r ? String(r.verdicts[e.slot] || '') : '';
+    const judge = c ? `<p class="notes">${esc(c.notes)}</p>${c.cringe_flags && c.cringe_flags.length ? `<div class="flags">Flags: ${esc(c.cringe_flags.join('; '))}</div>` : ''}<p class="verdict">${esc(c.verdict)}</p>` :
+      (techVerdict && !techVerdict.startsWith('Technical panel') ? `<p class="verdict">${esc(techVerdict)}</p>` : (e.craft_unavailable ? '<p class="verdict">Craft panel unavailable; scored on the technical panel only.</p>' : ''));
+    const fails = t ? t.checks.filter(x => !x.ok) : [];
+    const checks = state.done && t ? `<details><summary>Technical panel: ${fails.length ? fails.length + ' finding' + (fails.length > 1 ? 's' : '') : 'every check passed'}${e.problems && e.problems.length ? ' · package notes' : ''}</summary><ul class="checks">${t.checks.map(x => `<li class="${x.ok ? '' : 'bad'}">${esc(x.id)} — ${esc(x.detail)}${x.ok ? '' : (x.gate ? ' (gate)' : ` (−${x.penalty})`)}</li>`).join('')}${(e.problems || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>${e.sheet ? `<img class="sheet" alt="Contact sheet for ${esc(e.title)}" src="data:image/jpeg;base64,${e.sheet}">` : ''}</details>` : '';
+    const postBlock = isPick ? `<div class="post"><div class="eyebrow">Post text · ${(e.post || '').length}/280</div><p>${esc(e.post || '(no post text supplied)')}</p>${e.alt_text ? `<div class="eyebrow">Alt text</div><p>${esc(e.alt_text)}</p>` : ''}<button type="button" class="copy" data-copy="${esc(e.post || '')}">Copy post text</button></div>` : '';
+    const seatsNote = seats.length > 1 ? ` · seated in ${seats.length} slots` : '';
+
+    stage.innerHTML = `
+      <div class="player">
+        ${src || poster ? `<video id="video" controls playsinline muted autoplay loop preload="metadata"${poster ? ` poster="${poster}"` : ''}${src ? ` src="${src}"` : ''}></video>` : '<div class="noimg">No video in this replay</div>'}
+        <span class="counter">${index + 1} of ${slides.length}</span>
+        <button type="button" class="nav prev" aria-label="Previous entry" ${slides.length < 2 ? 'disabled' : ''}>‹</button>
+        <button type="button" class="nav next" aria-label="Next entry" ${slides.length < 2 ? 'disabled' : ''}>›</button>
+      </div>
+      <div class="strip" role="tablist">${strip}</div>
+      <div class="caption">
+        <div class="rankline">${state.done ? medal(rank) : `<span class="rank">${e.slot + 1}</span>`}<div style="min-width:0"><h2 class="title">${esc(e.title)}${chips}</h2><div class="by">by ${esc(e.name)}${e.duration ? ' · ' + fmtDur(e.duration) : ''}${e.thesis ? ' · <i>' + esc(e.thesis) + '</i>' : ''}${seatsNote}</div></div></div>
+        ${scoreBlock}
+        <div class="judge">${judge}${checks}${postBlock}</div>
+      </div>`;
+
+    videoEl = document.getElementById('video');
+    stage.querySelector('.nav.prev').addEventListener('click', () => step(-1));
+    stage.querySelector('.nav.next').addEventListener('click', () => step(1));
+    stage.querySelectorAll('.thumb').forEach(b => b.addEventListener('click', () => go(Number(b.dataset.i))));
+    const current = stage.querySelector('.thumb.current');
+    if (current && current.scrollIntoView) current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    stage.querySelectorAll('button.copy').forEach(b => b.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; } catch { b.textContent = 'Select and copy the text above'; }
       setTimeout(() => { b.textContent = 'Copy post text'; }, 1800);
     }));
+    if (videoEl) { const p = videoEl.play(); if (p && p.catch) p.catch(() => {}); }
   }
 
-  function render() { renderMeta(); renderEntries(); }
+  function go(i) { if (!slides.length) return; index = (i + slides.length) % slides.length; renderStage(); }
+  function step(d) { go(index + d); }
+  document.addEventListener('keydown', (ev) => {
+    if (ev.target && /input|textarea/i.test(ev.target.tagName)) return;
+    if (ev.key === 'ArrowLeft') { step(-1); ev.preventDefault(); }
+    if (ev.key === 'ArrowRight') { step(1); ev.preventDefault(); }
+  });
+
+  function render() { slides = buildSlides(); renderMeta(); renderStage(); }
 
   function applyReplay(replay) {
     state.mode = 'replay';
@@ -178,6 +234,11 @@
         blobUrls[Number(slot)] = URL.createObjectURL(new Blob([bytes], { type: 'video/mp4' }));
       } catch (e) { console.warn('media decode failed for slot', slot, e); }
     }
+    // Entries without their own media may share bytes with one that has it.
+    const byHash = {};
+    for (const e of state.entries) if (blobUrls[e.slot] && e.content_hash) byHash[e.content_hash] = blobUrls[e.slot];
+    for (const e of state.entries) if (!blobUrls[e.slot] && e.content_hash && byHash[e.content_hash]) blobUrls[e.slot] = byHash[e.content_hash];
+    index = 0;
     render();
   }
 
@@ -210,11 +271,20 @@
     const ws = new WebSocket(url.toString());
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
+      const before = slides[index] ? slides[index].entry.slot : null;
       if (m.type === 'snapshot') { state.phase = m.phase; state.done = m.done; state.brief = m.brief; state.entries = m.entries; state.results = m.results; }
       else if (m.type === 'phase') state.phase = m.phase;
       else if (m.type === 'seat') { const i = state.entries.findIndex(e => e.slot === m.seat.slot); if (i >= 0) state.entries[i] = { ...state.entries[i], ...m.seat }; else state.entries.push(m.seat); }
       else if (m.type === 'final') { state.results = m.results; state.done = true; state.phase = 'complete'; }
-      render();
+      const wasDone = state.done;
+      slides = buildSlides();
+      if (before != null) { const j = slides.findIndex(s => s.seats.includes(before)); if (j >= 0 && !(m.type === 'final')) index = j; }
+      if (m.type === 'final') index = 0;
+      renderMeta();
+      // Avoid restarting the current video on every status tick.
+      const currentSlot = slides[index] ? slides[index].entry.slot : null;
+      if (m.type !== 'seat' || m.seat.slot === currentSlot || !videoEl) renderStage();
+      void wasDone;
     };
     ws.onerror = () => showError('Live connection failed.');
     ws.onclose = () => { if (!state.done) $('meta').insertAdjacentHTML('beforeend', '<span>connection closed</span>'); };
@@ -225,7 +295,6 @@
   if (replayParam) {
     loadReplay(replayParam).catch(err => showError(String(err.message || err)));
   } else if (/\/client\/replay\/?$/.test(location.pathname)) {
-    mediaSrc = (slot) => new URL(`../media/${slot}.mp4`, location.href).toString();
     loadReplay(new URL('../replay.json', location.href).toString()).catch(err => showError(String(err.message || err)));
   } else {
     connectLive();
