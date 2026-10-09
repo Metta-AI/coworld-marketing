@@ -24,6 +24,7 @@ action: this agent reads X, it never writes to it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -351,7 +352,10 @@ def request_regrade(state: AgentState, softmax: Softmax, league_id: str, *, only
     )
     if not ids:
         return []
-    softmax.post(f"/observatory/v2/leagues/{league_id}/grade", {"policy_version_ids": ids})
+    # One key per distinct set and hour: the client retries every request, and the ladder ignores a repeat key.
+    digest = hashlib.sha256("\n".join(ids).encode()).hexdigest()[:16]
+    key = f"regrade:{digest}:{datetime.now(UTC).strftime('%Y%m%d%H')}"
+    softmax.post(f"/observatory/v2/leagues/{league_id}/grade", {"idempotency_key": key, "policy_version_ids": ids})
     state.last_regrade_at = now_iso()
     return ids
 

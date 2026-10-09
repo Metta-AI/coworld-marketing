@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -106,7 +107,11 @@ def main() -> int:
         status, body = call("POST", f"/leagues/{league}/rounds-paused", {"paused": False})
         print("unpause:", status, str(body)[:200])
         if args.trigger:
-            status, body = call("POST", f"/leagues/{league}/grade", {"policy_version_ids": []})
+            status, body = call(
+                "POST",
+                f"/leagues/{league}/grade",
+                {"idempotency_key": f"setup:{int(time.time())}", "policy_version_ids": []},
+            )
             print("grade (every champion):", status, str(body)[:300])
     status, after = call("GET", f"/leagues/{league}/settings")
     print("effective ladder:", json.dumps(after.get("effective_ladder_config"))[:500] if status == 200 else after)
