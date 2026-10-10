@@ -334,7 +334,7 @@ class ModelClient:
             "max_tokens": self.cfg.max_tokens,
             "temperature": temperature,
         }
-        headers = {"Content-Type": "application/json", "User-Agent": "coworld-marketing/0.3.1"}
+        headers = {"Content-Type": "application/json", "User-Agent": "coworld-marketing/0.3.2"}
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"
         if slot is not None and self.source == "sidecar":

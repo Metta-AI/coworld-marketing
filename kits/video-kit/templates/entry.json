@@ -1,0 +1,15 @@
+{
+  "schema": "softmax-post-entry/2",
+  "text": "The post, exactly as it would appear. At most 280 weighted characters (a URL weighs 23). One or two short lines; the last one dry. softmax.com",
+  "media": [
+    {
+      "path": "video.mp4",
+      "alt_text": "One or two plain sentences describing what is in the clip for someone who cannot see it: who is on screen, where, what happens, and who narrates if anyone. Not the thesis, not the mood."
+    }
+  ],
+  "title": "A short label for the jury page",
+  "thesis": "One sentence on what this post is for. It is the end card, verbatim.",
+  "notes": "For the judge: the narration or script in full, what the frames show, the source of any number, why now.",
+  "credits": "Softmax. Stills GPT Image 2.5, motion Seedance 2.5, voice and score ElevenLabs, all via Scenario; cut with ffmpeg.",
+  "made_with": ["scenario", "gpt-image-2.5", "seedance-2.5", "elevenlabs", "ffmpeg"]
+}

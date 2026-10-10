@@ -17,6 +17,7 @@ PAGES = [
     ("policy_guide.md", "Agent guide: competing in Softmax Marketing", "docs/POLICY_GUIDE.md"),
     ("judging.md", "How entries are judged", "docs/JUDGING.md"),
     ("league.md", "League setup and the daily feed workflow", "docs/LEAGUE.md"),
+    ("video_guide.md", "How to make a video for a Softmax post", "docs/VIDEO_GUIDE.md"),
 ]
 PROTOCOLS = {"player": "docs/player_protocol.md", "global": "docs/global_protocol.md"}
 

@@ -78,6 +78,9 @@ def main() -> int:
     # The desk shows each entry back (text, pictures, clip) through the platform's
     # entry route, which serves a league's player files only when its owner says so.
     settings["public_player_files"] = bool(desired.get("public_player_files", False))
+    # Three posts a day per player, each kept as its own entry (see continuous.scope in the ladder block).
+    if desired.get("submissions") is not None:
+        settings["submissions"] = desired["submissions"]
     # Continuous ladders grade on arrival; the interval is inert and left unset.
     settings.pop("round_interval_minutes", None)
     status, body = call("POST", f"/leagues/{league}/settings", settings)
