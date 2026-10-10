@@ -327,21 +327,42 @@ class ModelClient:
     def available(self) -> bool:
         return self.source != "none"
 
+    # Some frontier models refuse sampling controls outright: OpenRouter answers
+    # 404 "No provider supports this model with the requested parameter
+    # combination" for Opus 5.5 with a temperature set. The first such refusal
+    # drops the control for the rest of the run; readings then differ only by
+    # the model's own nondeterminism, which is still several readings.
+    supports_temperature: bool = True
+
     def complete(self, messages: list[dict[str, Any]], *, slot: int | None, temperature: float = 0.2) -> str:
-        body = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": self.cfg.max_tokens,
-            "temperature": temperature,
-        }
-        headers = {"Content-Type": "application/json", "User-Agent": "coworld-marketing/0.3.2"}
+        body: dict[str, Any] = {"model": self.model, "messages": messages, "max_tokens": self.cfg.max_tokens}
+        if self.supports_temperature:
+            body["temperature"] = temperature
+        headers = {"Content-Type": "application/json", "User-Agent": "coworld-marketing/0.3.3"}
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"
         if slot is not None and self.source == "sidecar":
             headers["X-Coworld-Player-Slot"] = str(slot)
         request = Request(self.base, data=json.dumps(body).encode(), headers=headers, method="POST")
-        with urlopen(request, timeout=self.cfg.timeout_seconds) as response:
-            payload = json.loads(response.read())
+        try:
+            with urlopen(request, timeout=self.cfg.timeout_seconds) as response:
+                payload = json.loads(response.read())
+        except HTTPError as error:
+            detail = ""
+            with suppress(Exception):
+                detail = error.read().decode(errors="replace")
+            if (
+                self.supports_temperature
+                and "temperature" in body
+                and error.code in {400, 404}
+                and "parameter" in detail.lower()
+            ):
+                logger.warning(
+                    "model %s refuses sampling controls (%s); retrying without temperature", self.model, error.code
+                )
+                self.supports_temperature = False
+                return self.complete(messages, slot=slot, temperature=temperature)
+            raise
         choice = payload["choices"][0]
         if choice.get("finish_reason") == "error":
             raise RuntimeError("model returned finish_reason=error")

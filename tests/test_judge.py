@@ -367,3 +367,47 @@ def test_feed_room_map_parses_leniently() -> None:
     assert feed.ships_for("sha256:b") == 7 and feed.ships_for("sha256:c") == 0 and feed.ships_for("sha256:d") == 4
     assert "sha256:e" not in feed.room and feed.ships_for("sha256:zzz") == 0
     assert parse_feed(json.dumps({**base, "room": "nonsense"}), source="t").room == {}
+
+
+def test_model_client_drops_temperature_when_the_model_refuses_it(monkeypatch) -> None:
+    import io as _io
+    from urllib.error import HTTPError
+
+    from marketing import judge as judge_module
+    from marketing.judge import ModelClient
+
+    monkeypatch.setenv("JUDGE_API_KEY", "k")
+    client = ModelClient(JudgeConfig())
+    bodies: list[dict] = []
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+
+    def fake_urlopen(request, timeout):
+        body = json.loads(request.data)
+        bodies.append(body)
+        if "temperature" in body:
+            raise HTTPError(
+                request.full_url,
+                404,
+                "nf",
+                {},
+                _io.BytesIO(
+                    b'{"error":{"message":"No provider supports this model with the requested parameter combination."}}'
+                ),
+            )
+        return _Resp()
+
+    monkeypatch.setattr(judge_module, "urlopen", fake_urlopen)
+    assert client.complete([{"role": "user", "content": "x"}], slot=0, temperature=0.7) == "{}"
+    assert [("temperature" in b) for b in bodies] == [True, False]
+    assert client.supports_temperature is False
+    client.complete([{"role": "user", "content": "x"}], slot=0, temperature=0.7)
+    assert "temperature" not in bodies[-1]
