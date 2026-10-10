@@ -22,7 +22,7 @@ class JudgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: JudgeMode = "panel"
-    model: str = Field(default="anthropic/claude-sonnet-4.6", min_length=1)
+    model: str = Field(default="anthropic/claude-opus-5.5", min_length=1)
     frames: int = Field(default=12, ge=4, le=24, description="Frames in the contact sheet shown to the craft panel.")
     max_tokens: int = Field(default=900, ge=200, le=4000)
     timeout_seconds: float = Field(default=90, gt=0, le=300)
@@ -33,8 +33,12 @@ class JudgeConfig(BaseModel):
     sample_temperature: float = Field(
         default=0.7, ge=0, le=1.5, description="Temperature for each reading when samples > 1 (0.2 when 1)."
     )
-    technical_weight: float = Field(default=0.25, ge=0, le=1)
-    craft_weight: float = Field(default=0.75, ge=0, le=1)
+    technical_weight: float = Field(
+        default=0.25, ge=0, le=1, description="Scale for the technical score when the craft panel could not run."
+    )
+    craft_weight: float = Field(
+        default=0.75, ge=0, le=1, description="Unused since rubric post/4; kept for old configs."
+    )
     postable_threshold: float = Field(
         default=70, ge=0, le=100, description="Judge score at or above which an entry is worth posting."
     )

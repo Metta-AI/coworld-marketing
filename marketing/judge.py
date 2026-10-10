@@ -24,7 +24,7 @@ from marketing.probe import Measurement
 
 logger = logging.getLogger("marketing.judge")
 
-RUBRIC_VERSION = "post/3"
+RUBRIC_VERSION = "post/4"
 # THE ONLY WINCES THERE ARE. A flag names a rule the post breaks (the rubric lists
 # them with their evidence); taste lives in the six scores. Anything the model
 # flags outside this list is dropped, so a judge's hunch about an end card or the
@@ -42,13 +42,16 @@ WINCE_RULES = (
     "illegible_media",
     "mascot_cheering",
 )
-CRAFT_KEYS = ("hook", "specific", "voice", "legible", "craft", "repostable")
+CRAFT_KEYS = ("hook", "clear", "specific", "voice", "legible", "craft", "repostable")
+# `clear` is the stranger's share: a post the team loves but nobody outside
+# would follow cannot score above the low seventies, whatever else it does.
 CRAFT_WEIGHTS = {
-    "hook": 0.20,
-    "specific": 0.20,
-    "voice": 0.25,
+    "hook": 0.15,
+    "clear": 0.20,
+    "specific": 0.15,
+    "voice": 0.20,
     "legible": 0.10,
-    "craft": 0.10,
+    "craft": 0.05,
     "repostable": 0.15,
 }
 
@@ -398,10 +401,13 @@ def build_messages(
         media_line = f"Media: {count} image{'s' if count != 1 else ''}"
     else:
         media_line = f"Media: {entry.media_kind}"
-    facts = [
-        f"Brief: {brief}",
+    # THE STRANGER'S VIEW FIRST: the post and its media, nothing else, so the
+    # reading that decides `hook`, `clear` and `voice` happens before the
+    # judge knows what the entrant meant. The brief, the alt text, the thesis
+    # and the notes follow, labelled as context for checking facts.
+    post_block = [
         f"Account: @{account}",
-        f"Post text ({weighted_length(meta.text)} of 280 weighted characters):",
+        f"THE POST, as a stranger on X sees it ({weighted_length(meta.text)} of 280 weighted characters):",
         meta.text.strip() or "(no text; media only)",
         "",
         media_line,
@@ -411,18 +417,13 @@ def build_messages(
         label = item_label(item, index, count) or item.kind.capitalize()
         if measurement is not None and measurement.ok:
             if item.kind == "video":
-                facts.append(
+                post_block.append(
                     f"Video: {measurement.duration:.0f} s, {measurement.width}x{measurement.height}, "
                     f"audio: {'yes' if measurement.has_audio else 'no'}"
                 )
             else:
-                facts.append(f"{label}: {measurement.width}x{measurement.height}")
-        facts.append(f"Alt text{'' if count < 2 else f' for {label}'}: {item.alt_text.strip() or '(none)'}")
-    facts += [
-        f"Entrant's thesis: {meta.thesis.strip() or '(none)'}",
-        f"Entrant's notes: {meta.notes.strip() or '(none)'}",
-    ]
-    content: list[dict[str, Any]] = [{"type": "text", "text": "\n".join(facts)}]
+                post_block.append(f"{label}: {measurement.width}x{measurement.height}")
+    content: list[dict[str, Any]] = [{"type": "text", "text": "\n".join(post_block)}]
     if entry.media_kind == "video" and imagery.sheet is not None and imagery.sheet.exists():
         content.append(
             {"type": "text", "text": "Contact sheet, frames in time order, left to right then top to bottom:"}
@@ -434,13 +435,24 @@ def build_messages(
     elif imagery.stills:
         total = len(imagery.stills)
         for index, still in enumerate(imagery.stills):
-            alt = entry.media[index].alt_text.strip() if index < len(entry.media) else ""
-            caption = f"Image {index + 1} of {total}" + (f". Alt text: {alt}" if alt else "")
-            content.append({"type": "text", "text": caption})
+            content.append({"type": "text", "text": f"Image {index + 1} of {total}"})
             content.append({"type": "image_url", "image_url": {"url": _data_uri(still)}})
     elif imagery.still is not None and imagery.still.exists():
         content.append({"type": "text", "text": "The attached picture:"})
         content.append({"type": "image_url", "image_url": {"url": _data_uri(imagery.still)}})
+    context_block = [
+        "CONTEXT THE STRANGER DOES NOT SEE. Use it to check facts and the alt text, "
+        "not to supply meaning the post lacks.",
+        f"Brief: {brief}",
+    ]
+    for index, item in enumerate(entry.media):
+        label = item_label(item, index, count) or item.kind.capitalize()
+        context_block.append(f"Alt text{'' if count < 2 else f' for {label}'}: {item.alt_text.strip() or '(none)'}")
+    context_block += [
+        f"Entrant's thesis: {meta.thesis.strip() or '(none)'}",
+        f"Entrant's notes: {meta.notes.strip() or '(none)'}",
+    ]
+    content.append({"type": "text", "text": "\n".join(context_block)})
     content.append({"type": "text", "text": "Score it. Return only the JSON object."})
     return [{"role": "system", "content": rubric_text()}, {"role": "user", "content": content}]
 
@@ -573,12 +585,19 @@ def craft_review(
 
 
 def judge_score(technical: TechnicalReview, craft: CraftReview | None, cfg: JudgeConfig) -> float:
-    """The autograder's 0 to 100: technical and craft panels blended; ineligible entries score 0."""
+    """The autograder's 0 to 100: the craft panel's score, less the technical panel's deductions.
+
+    A clean package earns nothing by itself (a test string used to collect 25
+    points for being well-formed); a flawed one loses what the technical panel
+    deducted, point for point. Ineligible entries score 0. When the craft panel
+    could not run at all, the technical score is scaled by `technical_weight`
+    so the entry is visibly provisional rather than unscored.
+    """
     if not technical.eligible:
         return 0.0
     if craft is None:
         return round(cfg.technical_weight * technical.score, 2)
-    return round(cfg.technical_weight * technical.score + cfg.craft_weight * craft.score, 2)
+    return round(max(0.0, craft.score - (100.0 - technical.score)), 2)
 
 
 def cache_record(technical: TechnicalReview, craft: CraftReview | None, model: str) -> dict[str, Any]:

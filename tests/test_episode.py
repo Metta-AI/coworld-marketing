@@ -116,15 +116,23 @@ async def test_engagement_feed_blends_and_caches(
         "judge_cache": {
             plain_hash: {
                 "rubric": RUBRIC_VERSION,
-                "model": "anthropic/claude-sonnet-4.6",
+                "model": "anthropic/claude-opus-5.5",
                 "technical": {"score": 100, "eligible": True, "checks": []},
                 "craft": {
                     "score": 80,
-                    "scores": {"hook": 8, "specific": 8, "voice": 8, "legible": 8, "craft": 8, "repostable": 8},
+                    "scores": {
+                        "hook": 8,
+                        "clear": 8,
+                        "specific": 8,
+                        "voice": 8,
+                        "legible": 8,
+                        "craft": 8,
+                        "repostable": 8,
+                    },
                     "cringe_flags": [],
                     "notes": "cached notes",
                     "verdict": "cached verdict",
-                    "model": "anthropic/claude-sonnet-4.6",
+                    "model": "anthropic/claude-opus-5.5",
                     "attempts": 1,
                 },
             }
@@ -151,7 +159,7 @@ async def test_engagement_feed_blends_and_caches(
     # The Wall: technical only (no model) -> judge <= 25, plus the full engagement half.
     assert results["scores"][0] == round(0.5 * results["judge"][0] + 50.0, 2)
     # Plain post: judged from the cache -> craft 80 present without any model call.
-    assert results["craft"][1] == 80.0 and results["judge"][1] == 85.0
+    assert results["craft"][1] == 80.0 and results["judge"][1] == 80.0
     assert results["verdicts"][1] == "cached verdict"
     assert results["judge_mode"] == "panel"
     # A posted entry is never the next pick, even with the top score; the unposted cached one qualifies.

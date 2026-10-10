@@ -81,7 +81,7 @@ def test_judge_score_and_blend() -> None:
     cfg = JudgeConfig()
     tech = TechnicalReview(score=90, eligible=True)
     craft = CraftReview(
-        scores={"hook": 8, "specific": 9, "voice": 7, "legible": 8, "craft": 8, "repostable": 8},
+        scores={"hook": 8, "clear": 8, "specific": 9, "voice": 7, "legible": 8, "craft": 8, "repostable": 8},
         cringe_flags=[],
         notes="",
         verdict="",
@@ -89,7 +89,18 @@ def test_judge_score_and_blend() -> None:
         attempts=1,
     )
     assert abs(craft.score - 79.5) < 1e-6
-    assert judge_score(tech, craft, cfg) == round(0.25 * 90 + 0.75 * 79.5, 2)
+    # Technical faults subtract point for point; a clean package adds nothing.
+    assert judge_score(tech, craft, cfg) == 69.5
+    assert judge_score(TechnicalReview(score=100, eligible=True), craft, cfg) == 79.5
+    placeholder = CraftReview(
+        scores={k: (1 if k == "craft" else 0) for k in craft.scores},
+        cringe_flags=[],
+        notes="",
+        verdict="",
+        model="m",
+        attempts=1,
+    )
+    assert judge_score(TechnicalReview(score=100, eligible=True), placeholder, cfg) == 0.5
     assert judge_score(tech, None, cfg) == 22.5
     assert judge_score(TechnicalReview(score=0, eligible=False), craft, cfg) == 0.0
     eng = EngagementConfig()
@@ -148,7 +159,7 @@ def test_engagement_curve_and_feed() -> None:
 def test_judge_cache_round_trip() -> None:
     tech = TechnicalReview(score=95, eligible=True)
     craft = CraftReview(
-        scores={"hook": 7, "specific": 7, "voice": 7, "legible": 7, "craft": 7, "repostable": 7},
+        scores={"hook": 7, "clear": 7, "specific": 7, "voice": 7, "legible": 7, "craft": 7, "repostable": 7},
         cringe_flags=["a flag"],
         notes="n",
         verdict="v",
@@ -207,8 +218,8 @@ def test_single_item_checks_keep_their_plain_wording(tiny_image: Path, tmp_path:
     assert alt.detail == "media without alt text"
 
 
-def test_rubric_version_bumped_for_rule_winces() -> None:
-    assert RUBRIC_VERSION == "post/3"
+def test_rubric_version_bumped_for_the_stranger_read() -> None:
+    assert RUBRIC_VERSION == "post/4"
 
 
 # --------------------------------------------------------------------------- readings, medians and rule winces
@@ -237,7 +248,7 @@ def test_known_flags_keep_rule_winces_and_drop_hunches() -> None:
 
 def _reading(total: int, flags: list[str] | None = None, verdict: str = "v") -> dict:
     return {
-        **{k: total for k in ("hook", "specific", "voice", "legible", "craft", "repostable")},
+        **{k: total for k in ("hook", "clear", "specific", "voice", "legible", "craft", "repostable")},
         "cringe_flags": flags or [],
         "notes": f"notes {total}",
         "verdict": verdict,
@@ -290,9 +301,15 @@ def test_build_messages_with_three_stills() -> None:
     texts = [part["text"] for part in content if part["type"] == "text"]
     facts = texts[0]
     assert "Media: 3 images" in facts and "image 2/3 (b.png): 640x360" in facts
-    assert "Alt text for image 1/3 (a.png): first" in facts and "Alt text for image 2/3 (b.png): (none)" in facts
+    # The stranger's view carries no alt text; it follows the pictures, as context for checking facts.
+    assert "Alt text" not in facts
+    context = next(t for t in texts if t.startswith("CONTEXT THE STRANGER DOES NOT SEE"))
+    assert "Alt text for image 1/3 (a.png): first" in context and "Alt text for image 2/3 (b.png): (none)" in context
+    assert content.index(next(p for p in content if p["type"] == "text" and p["text"] is context)) > max(
+        i for i, p in enumerate(content) if p["type"] == "image_url"
+    )
     labels = [t for t in texts if t.startswith("Image ")]
-    assert labels == ["Image 1 of 3. Alt text: first", "Image 2 of 3", "Image 3 of 3. Alt text: third"]
+    assert labels == ["Image 1 of 3", "Image 2 of 3", "Image 3 of 3"]
     # Each label immediately precedes its picture.
     for i, part in enumerate(content):
         if part["type"] == "image_url":
