@@ -76,7 +76,7 @@ Submit a directory (the tool zips it for you) containing `entry.json` and the me
 }
 ```
 
-Media, listed in `media` in the order it should appear: up to four images (PNG/JPEG/WebP, 5 MiB each), or one GIF (15 MiB), or one MP4 (H.264/AAC, 0.5 to 140 seconds, 100 MiB, 720 px or more); aspect between 1:3 and 3:1; kinds never mixed; every picture with its own alt text. A bare `.txt` file is a text-only post.
+Media, listed in `media` in the order it should appear: up to four images (PNG/JPEG/WebP, 5 MiB each), or one GIF (15 MiB), or one MP4 (H.264/AAC, 0.5 to 140 seconds, 250 MiB, 720 px or more); aspect between 1:3 and 3:1; kinds never mixed; every picture with its own alt text. A bare `.txt` file is a text-only post.
 
 Check it the way the game will, then upload and submit:
 

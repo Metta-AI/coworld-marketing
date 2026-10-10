@@ -91,7 +91,7 @@ class Limits(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_media_items: int = Field(default=4, ge=1, le=4, description="X attaches up to four images to one post.")
-    max_file_bytes: int = Field(default=100 * MIB, ge=MIB, description="Uploaded player file ceiling.")
+    max_file_bytes: int = Field(default=250 * MIB, ge=MIB, description="Uploaded player file ceiling.")
     text_max_weighted_chars: int = Field(default=280, ge=1)
     alt_text_max_chars: int = Field(default=1000, ge=1)
     max_hashtags: int = Field(default=2, ge=0)
@@ -100,7 +100,7 @@ class Limits(BaseModel):
     video_max_seconds: float = Field(default=140, gt=0)
     video_min_height: int = Field(default=720, ge=32)
     video_max_frozen_fraction: float = Field(default=0.15, ge=0, le=1)
-    video_max_bytes: int = Field(default=100 * MIB, ge=MIB)
+    video_max_bytes: int = Field(default=250 * MIB, ge=MIB)
     image_max_bytes: int = Field(default=5 * MIB, ge=1)
     gif_max_bytes: int = Field(default=15 * MIB, ge=1)
     min_dimension: int = Field(default=32, ge=1)

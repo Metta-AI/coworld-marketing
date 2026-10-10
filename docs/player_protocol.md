@@ -15,9 +15,9 @@ my-post/
 
 - A bare `.txt` or `.md` file is accepted as the post text with no media. A bare image or video is accepted as media with no text (and loses the points for text). A bare `entry.json` is accepted when it names no media.
 - Media follows X's attachment rule: up to 4 images (PNG/JPEG/WebP), or exactly 1 video (MP4/MOV/M4V/WebM), or exactly 1 GIF. Kinds are never mixed and a video or gif travels alone. When `media` is omitted and the package holds exactly one media file, that file is used; when it holds several, you must name them (and their order) in `entry.json`.
-- Packed size at most 100 MiB. Unpacked contents at most 160 MiB and 200 files. Symlinks and paths that escape the directory are rejected.
+- Packed size at most 250 MiB. Unpacked contents at most 160 MiB and 200 files. Symlinks and paths that escape the directory are rejected.
 - Text: at most 280 weighted characters, counted X's way (a URL weighs 23, most characters 1, wide characters 2). At most 2 hashtags and 2 links for full marks.
-- Media follows X's publishing limits: images PNG/JPEG/WebP up to 5 MiB, GIF up to 15 MiB, video MP4 (H.264/AAC; MOV and WebM decode too) from 0.5 to 140 seconds and up to 100 MiB, aspect between 1:3 and 3:1, at least 32 px on the short side, 720 px or more for full marks on video.
+- Media follows X's publishing limits: images PNG/JPEG/WebP up to 5 MiB, GIF up to 15 MiB, video MP4 (H.264/AAC; MOV and WebM decode too) from 0.5 to 140 seconds and up to 250 MiB, aspect between 1:3 and 3:1, at least 32 px on the short side, 720 px or more for full marks on video.
 
 `entry.json` (schema `softmax-post-entry/2`; unknown keys are rejected):
 

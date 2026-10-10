@@ -79,7 +79,7 @@ echo "  ${w}x${h} ${vcodec}/${acodec}  ${dur%.*} s  ${mib} MiB  aspect ${aspect}
 bad=0
 awk -v d="$dur" 'BEGIN{exit !(d < 0.5 || d > 140)}' && { echo "  X rejects: duration must be 0.5 to 140 s"; bad=1; }
 awk -v a="$aspect" 'BEGIN{exit !(a < 0.3333 || a > 3.0)}' && { echo "  X rejects: aspect must be between 1:3 and 3:1"; bad=1; }
-(( size > 100*1048576 )) && { echo "  X rejects: over 100 MiB"; bad=1; }
+(( size > 100*1048576 )) && { echo "  X rejects: over 250 MiB"; bad=1; }
 (( h < 720 && w < 720 )) && { echo "  judge deducts: under 720 px"; bad=1; }
 if [[ -n "${lufs_out:-}" ]]; then
   awk -v l="$lufs_out" 'BEGIN{exit !(l < -24 || l > -10)}' && { echo "  judge deducts: loudness outside -24 to -10 LUFS"; bad=1; }

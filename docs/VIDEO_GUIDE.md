@@ -26,7 +26,7 @@ Each step is approved cheaply before the next is paid for. Scenario prices: a 20
 8. **Cut from word timings.** `python3 tools/phrase_times.py vo_words.json` prints each sentence's start and end with the 1.0 s narration offset. Each shot starts about 0.4 s before its sentence and ends when the sentence ends plus the time the action needs. Put the numbers in `cut=` in `tools/assemble.py` (hard cuts, one 0.8 s crossfade into the end card held 5.5 s, bed at 0.16, `loudnorm I=-17`) and render. Re-run `phrase_times.py --cuts` after every clip swap; it flags shots that start late or run long.
 9. **End card.** `tools/cards.py`: cream paper, the thesis in IBM Plex Serif, the wordmark, the URL. Print `softmax.com` once; the judge flagged The Wall for printing it twice.
 10. **Verify.** `tools/contact_sheet.sh reel.mp4 sheet.png` (0.5 s steps) and read the whole thing, then `--judge` for the twelve frames the panel sees. `ffmpeg -af ebur128` around -17 LUFS; `freezedetect` should fire only on the end card.
-11. **Encode for X.** `tools/encode_for_x.sh reel.mp4 video.mp4`: H.264 high profile, yuv420p, AAC 48 kHz, at least 720 px tall, `+faststart`, two-pass loudnorm to -16 LUFS, then it prints duration, size, aspect and loudness against X's limits: 0.5 to 140 s, under 100 MiB, aspect between 1:3 and 3:1, loudness within -24 to -10 LUFS (the game deducts outside that), 720 px or more (deducts below), under 15 percent frozen frames (deducts above). A silent source is encoded video-only.
+11. **Encode for X.** `tools/encode_for_x.sh reel.mp4 video.mp4`: H.264 high profile, yuv420p, AAC 48 kHz, at least 720 px tall, `+faststart`, two-pass loudnorm to -16 LUFS, then it prints duration, size, aspect and loudness against X's limits: 0.5 to 140 s, under 250 MiB, aspect between 1:3 and 3:1, loudness within -24 to -10 LUFS (the game deducts outside that), 720 px or more (deducts below), under 15 percent frozen frames (deducts above). A silent source is encoded video-only.
 
 ## 3. Prompt rules, with the before and after
 
@@ -57,7 +57,7 @@ And from the rubric, the rules that are flags rather than taste: hashtag piles, 
 - Is the thesis absent until the card, and on the card exactly once? Wordmark once, URL once?
 - Is the last spoken line dry? Is the warmth in the pictures?
 - Re-derived the cut from word timings after the last clip swap? Does any shot start after its line, or run more than a second past it without a reason?
-- Encode: H.264/AAC, 720 px or more, 0.5-140 s, under 100 MiB, aspect within 1:3 to 3:1, loudness between -24 and -10 LUFS, frozen frames under 15 percent (only the end card).
+- Encode: H.264/AAC, 720 px or more, 0.5-140 s, under 250 MiB, aspect within 1:3 to 3:1, loudness between -24 and -10 LUFS, frozen frames under 15 percent (only the end card).
 - Post text: one or two lines, under 280 weighted, no hashtags, no exclamation marks, does not repeat the film, ends in `softmax.com`.
 - Alt text: describes what is in the clip for someone who cannot see it; names who narrates.
 - Would a researcher repost this under their own name today?

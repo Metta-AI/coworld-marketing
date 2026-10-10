@@ -17,7 +17,7 @@ Gates (a failure makes the entry ineligible and the score 0):
 - the text weighs at most 280 characters, counted X's way (URLs 23, wide characters 2);
 - the attachments follow X's rule: up to 4 images, or 1 video, or 1 gif, never mixed;
 - every attachment decodes, has at least 32 px on the short side, and an aspect between 1:3 and 3:1;
-- video is 0.5 to 140 seconds and at most 100 MiB; images at most 5 MiB each; GIFs at most 15 MiB.
+- video is 0.5 to 140 seconds and at most 250 MiB; images at most 5 MiB each; GIFs at most 15 MiB.
 
 Deductions from 100: no text with media (10), more than 2 hashtags (5), more than 2 links (5), alt text missing on an attachment (5) or over 1000 characters (3), video under 720 px (10), more than 15 percent of a video frozen (10), video loudness outside -24 to -10 LUFS (5), `entry.json` problems (5).
 
